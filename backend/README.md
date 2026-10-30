@@ -92,6 +92,68 @@ No new environment variables are required for this zone-estimate implementation.
 `backend/.env.example` explicitly notes that delivery rates/distances are
 configured in Admin and that no external routing secret is currently used.
 
+## Staff dashboard API
+
+The Next.js staff dashboard is available at `/admin-dashboard`; the built-in
+Django Admin remains available at `/admin/`. Staff sign in at
+`/admin-dashboard/login` with an existing Django staff account. The frontend
+uses the existing DRF token authentication. `POST /api/accounts/staff-login/`
+issues a token only after validating staff credentials, and
+`GET /api/accounts/staff/me/` verifies that the token still belongs to a staff
+user. Staff API views use Django's `IsAdminUser` permission; hiding dashboard
+controls is not the security boundary, and customer tokens cannot access these
+endpoints.
+
+The dashboard uses these endpoints:
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET`, `POST` | `/api/catalogue/staff/products/` | Search/list and create products |
+| `GET`, `PATCH` | `/api/catalogue/staff/products/{id}/` | Read or update product details and publication status |
+| `GET`, `POST` | `/api/catalogue/staff/categories/` | Search/list and create categories |
+| `GET`, `PATCH` | `/api/catalogue/staff/categories/{id}/` | Read or update a category |
+| `GET`, `POST` | `/api/catalogue/staff/brands/` | Search/list and create brands |
+| `GET`, `PATCH` | `/api/catalogue/staff/brands/{id}/` | Read or update a brand |
+| `GET` | `/api/inventory/` | List/search inventory |
+| `POST` | `/api/inventory/{product_id}/receive/` | Receive stock using the inventory service |
+| `GET` | `/api/orders/staff/` | List orders |
+| `POST` | `/api/orders/staff/{reference}/complete/` | Complete an order through the existing state-transition service |
+| `GET` | `/api/orders/staff/dashboard/` | Order/payment status counts, paid revenue, recent orders, and low-stock alerts |
+| `GET` | `/api/orders/staff/payments/` | Read-only payment records |
+| `GET` | `/api/orders/staff/delivery-pricing/` | Read pricing configuration, zones, and surcharges |
+| `GET` | `/api/staff/customers/` | Search/list customer records |
+
+Superuser account management is separate from the staff operations permission.
+Only active Django superusers can use:
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET`, `POST` | `/api/superadmin/users/` | Search/list accounts and create customers, staff, or superusers |
+| `GET`, `PATCH` | `/api/superadmin/users/{id}/` | Read or update an account, role, activation state, or password |
+
+Creating a customer also creates its customer profile and cart. Passwords are
+validated by Django's configured validators and stored only as Django password
+hashes. The API does not expose password values. Superusers cannot deactivate
+or demote themselves, and the final active superuser cannot be deactivated or
+demoted. Ordinary staff tokens are explicitly denied these account-management
+routes.
+
+Payment records are read-only in the dashboard; staff cannot mark an order paid
+there. Payment state remains controlled by verified provider callbacks and the
+existing payment services. Delivery pricing changes are managed through Django
+Admin. Promotions, preorders, vehicle enquiries, and general business settings
+do not currently have supporting backend models and APIs, so the dashboard
+marks those sections as unavailable rather than displaying fabricated data or
+accepting changes that would not be persisted.
+
+## Media and Image File Uploads
+
+Images across the system support direct file uploads (JPEG, PNG, WebP, GIF up to 10 MB):
+- **Cloudinary / Local Storage:** If Cloudinary credentials are configured (`CLOUDINARY_URL` or keys in `.env`), images are automatically processed and stored on Cloudinary with automatic optimization. Otherwise, they fall back gracefully to local Django media storage.
+- **Product Images:** Products support up to 3 images (with 1 primary image). More than 3 images are rejected at both the model validation and serializer levels.
+- **Direct Uploads in Django Admin:** Categories, Brands, Products, Promotions, and Homepage Settings all have native file upload inputs with image thumbnail and preview rendering in Django Admin.
+- **Direct Uploads via Staff API:** The staff endpoints accept `multipart/form-data` uploads directly (e.g. `images` files for products, `image_file` for categories/promotions, `logo_file` for brands, and `hero_image_file` for homepage settings), as well as batch file uploads to `/api/catalogue/staff/media/`.
+
 ## Local development and migrations
 
 From PowerShell:

@@ -1,22 +1,17 @@
-import type { ReactNode } from "react";
+interface Props {
+  title?: string;
+  message?: string;
+}
 
-export function EmptyState({
-  title,
-  description,
-  action,
-}: {
-  title: string;
-  description: string;
-  action?: ReactNode;
-}) {
+export default function EmptyState({
+  title = "Nothing here yet",
+  message,
+}: Props) {
   return (
     <div className="empty-state">
-      <span className="empty-state-mark" aria-hidden="true">
-        W
-      </span>
-      <h2>{title}</h2>
-      <p>{description}</p>
-      {action ? <div className="empty-state-action">{action}</div> : null}
+      <p className="empty-state-title">{title}</p>
+      {message && <p className="empty-state-msg">{message}</p>}
     </div>
   );
 }
+

@@ -1,38 +1,33 @@
-import Link from "next/link";
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+interface Props extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: "primary" | "outline" | "ghost";
+  size?: "sm" | "md" | "lg";
+  loading?: boolean;
+}
 
-type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  href?: string;
-  variant?: "primary" | "secondary" | "outline" | "ghost" | "light";
-  children: ReactNode;
-};
-
-const variantClass: Record<NonNullable<ButtonProps["variant"]>, string> = {
-  primary: "button-primary",
-  secondary: "button-secondary",
-  outline: "button-outline",
-  ghost: "button-ghost",
-  light: "button-light",
-};
-
-export function Button({
-  href,
+export default function Button({
   variant = "primary",
-  className = "",
+  size = "md",
+  loading,
+  disabled,
   children,
+  className = "",
   ...props
-}: ButtonProps) {
-  const classes = `button ${variantClass[variant]} ${className}`.trim();
-  if (href) {
-    return (
-      <Link href={href} className={classes}>
-        {children}
-      </Link>
-    );
-  }
+}: Props) {
+  const cls = [
+    "btn",
+    `btn-${variant}`,
+    `btn-${size}`,
+    loading ? "btn-loading" : "",
+    className,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <button className={classes} {...props}>
+    <button {...props} className={cls} disabled={disabled || loading}>
+      {loading ? <span className="btn-spinner" aria-hidden="true" /> : null}
       {children}
     </button>
   );
 }
+

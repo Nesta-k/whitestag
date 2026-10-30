@@ -1,151 +1,140 @@
 "use client";
 
-/* eslint-disable react-hooks/set-state-in-effect */
-
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
-  useMemo,
   useState,
+  useCallback,
+  ReactNode,
 } from "react";
-import * as accountsApi from "@/lib/api/accounts";
+import { login, logout, getMe, googleLogin, register } from "@/lib/api/accounts";
 import { ApiError } from "@/lib/api/client";
-import type { Customer } from "@/types/api";
+import type { AuthToken, CustomerAccount } from "@/types/api";
 
 interface AuthContextValue {
-  customer: Customer | null;
-  isLoading: boolean;
-  authError: string;
+  user: CustomerAccount | null;
+  token: string | null;
+  loading: boolean;
+  error: string | null;
   signIn: (email: string, password: string) => Promise<void>;
-  signInWithGoogle: (credential: string) => Promise<void>;
-  signUp: (
-    email: string,
-    password: string,
-    passwordConfirm: string,
-  ) => Promise<void>;
+  signInWithGoogle: (idToken: string) => Promise<void>;
+  signUp: (payload: {
+    email: string;
+    password: string;
+    password_confirm: string;
+  }) => Promise<void>;
   signOut: () => Promise<void>;
-  refreshCustomer: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
-const TOKEN_KEY = "whitestag.auth.token";
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [customer, setCustomer] = useState<Customer | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [authError, setAuthError] = useState("");
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<CustomerAccount | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const refreshCustomer = useCallback(async () => {
-    const token = window.localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      setCustomer(null);
-      setAuthError("");
-      setIsLoading(false);
+  // Restore session on mount
+  useEffect(() => {
+    const saved = localStorage.getItem("ws_token");
+    if (!saved) {
+      setLoading(false);
       return;
     }
-
-    setIsLoading(true);
-    try {
-      setCustomer(await accountsApi.getCurrentCustomer());
-      setAuthError("");
-    } catch (error) {
-      setCustomer(null);
-      if (error instanceof ApiError && error.status === 401) {
-        window.localStorage.removeItem(TOKEN_KEY);
-        setAuthError("Your session has expired. Please sign in again.");
-      } else {
-        setAuthError("We could not confirm your account. Please try again.");
-      }
-    } finally {
-      setIsLoading(false);
-    }
+    setToken(saved);
+    getMe()
+      .then(setUser)
+      .catch((sessionError: unknown) => {
+        if (
+          sessionError instanceof ApiError &&
+          (sessionError.status === 401 || sessionError.status === 403)
+        ) {
+          localStorage.removeItem("ws_token");
+          setToken(null);
+          return;
+        }
+        setError(
+          sessionError instanceof Error
+            ? sessionError.message
+            : "Could not verify your saved sign-in.",
+        );
+      })
+      .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => {
-    void refreshCustomer();
-  }, [refreshCustomer]);
-
-  const saveAuth = useCallback((token: string, nextCustomer: Customer) => {
-    window.localStorage.setItem(TOKEN_KEY, token);
-    setCustomer(nextCustomer);
-    setAuthError("");
-    setIsLoading(false);
+  const persist = useCallback((response: AuthToken) => {
+    const { token: tok, customer } = response;
+    localStorage.setItem("ws_token", tok);
+    setToken(tok);
+    setUser(customer);
+    setError(null);
   }, []);
 
   const signIn = useCallback(
     async (email: string, password: string) => {
-      const response = await accountsApi.login(email, password);
-      saveAuth(response.token, response.customer);
+      const res = await login({ email, password });
+      persist(res);
     },
-    [saveAuth],
+    [persist]
   );
 
   const signInWithGoogle = useCallback(
-    async (credential: string) => {
-      const response = await accountsApi.loginWithGoogle(credential);
-      saveAuth(response.token, response.customer);
+    async (idToken: string) => {
+      const res = await googleLogin(idToken);
+      persist(res);
     },
-    [saveAuth],
+    [persist]
   );
 
   const signUp = useCallback(
-    async (
-      email: string,
-      password: string,
-      passwordConfirm: string,
-    ) => {
-      const response = await accountsApi.register(
-        email,
-        password,
-        passwordConfirm,
-      );
-      saveAuth(response.token, response.customer);
+    async (payload: {
+      email: string;
+      password: string;
+      password_confirm: string;
+    }) => {
+      const res = await register(payload);
+      persist(res);
     },
-    [saveAuth],
+    [persist]
   );
 
   const signOut = useCallback(async () => {
+    let signOutError: string | null = null;
     try {
-      await accountsApi.logout();
-    } finally {
-      window.localStorage.removeItem(TOKEN_KEY);
-      setCustomer(null);
-      setAuthError("");
+      await logout();
+    } catch (requestError) {
+      signOutError =
+        requestError instanceof Error
+          ? `We could not confirm sign-out with the server: ${requestError.message}`
+          : "We could not confirm sign-out with the server.";
     }
+    localStorage.removeItem("ws_token");
+    setToken(null);
+    setUser(null);
+    setError(signOutError);
   }, []);
 
-  const value = useMemo(
-    () => ({
-      customer,
-      isLoading,
-      authError,
-      signIn,
-      signInWithGoogle,
-      signUp,
-      signOut,
-      refreshCustomer,
-    }),
-    [
-      customer,
-      isLoading,
-      authError,
-      signIn,
-      signInWithGoogle,
-      signOut,
-      signUp,
-      refreshCustomer,
-    ],
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        loading,
+        error,
+        signIn,
+        signInWithGoogle,
+        signUp,
+        signOut,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
   );
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-export function useAuth(): AuthContextValue {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth must be used within AuthProvider.");
-  }
-  return context;
+export function useAuth() {
+  const ctx = useContext(AuthContext);
+  if (!ctx) throw new Error("useAuth must be used inside AuthProvider");
+  return ctx;
 }

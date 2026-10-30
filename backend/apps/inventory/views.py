@@ -1,4 +1,5 @@
 from django.shortcuts import get_object_or_404
+from django.db.models import Q
 from rest_framework import status
 from rest_framework.exceptions import APIException, NotFound, ValidationError
 from rest_framework.generics import ListAPIView
@@ -36,10 +37,19 @@ class StockConflict(APIException):
 
 
 class InventoryRecordListView(ListAPIView):
-    queryset = InventoryRecord.objects.select_related("product").all()
     serializer_class = InventoryRecordSerializer
     permission_classes = [IsAdminUser]
     pagination_class = InventoryPagination
+
+    def get_queryset(self):
+        queryset = InventoryRecord.objects.select_related("product").all()
+        search = self.request.query_params.get("search", "").strip()
+        if search:
+            queryset = queryset.filter(
+                Q(product__name__icontains=search)
+                | Q(product__sku__icontains=search)
+            )
+        return queryset
 
 
 class InventoryRecordDetailView(APIView):

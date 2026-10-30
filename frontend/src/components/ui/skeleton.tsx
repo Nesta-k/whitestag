@@ -1,8 +1,18 @@
-interface SkeletonProps {
-  className?: string;
-  label?: string;
+export function Skeleton({ className = "" }: { className?: string }) {
+  return <div className={`skeleton ${className}`} aria-hidden="true" />;
 }
 
-export function Skeleton({ className = "", label = "Loading" }: SkeletonProps) {
-  return <div className={`skeleton ${className}`.trim()} role="status" aria-label={label} />;
+export function ProductCardSkeleton() {
+  return (
+    <div className="product-card product-card--skeleton">
+      <Skeleton className="product-card-image-wrap" />
+      <div className="product-card-body">
+        <Skeleton className="sk-line sk-line--sm" />
+        <Skeleton className="sk-line" />
+        <Skeleton className="sk-line sk-line--sm" />
+        <Skeleton className="sk-line sk-line--price" />
+      </div>
+    </div>
+  );
 }
+

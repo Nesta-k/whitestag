@@ -8,3 +8,5 @@ psycopg==3.3.6
 psycopg-binary==3.3.6
 sqlparse==0.6.0
 tzdata==2026.5
+cloudinary>=1.40.0
+

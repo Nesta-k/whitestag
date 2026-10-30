@@ -1,7 +1,6 @@
 "use client";
 
-import Script from "next/script";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface GoogleCredentialResponse {
   credential?: string;
@@ -14,17 +13,7 @@ interface GoogleIdentityServices {
         client_id: string;
         callback: (response: GoogleCredentialResponse) => void;
       }) => void;
-      renderButton: (
-        parent: HTMLElement,
-        options: {
-          theme: "outline";
-          size: "large";
-          text: "continue_with";
-          shape: "rectangular";
-          width: number;
-          logo_alignment: "left";
-        },
-      ) => void;
+      renderButton: (parent: HTMLElement, options: Record<string, unknown>) => void;
     };
   };
 }
@@ -35,99 +24,113 @@ declare global {
   }
 }
 
-interface GoogleSignInButtonProps {
-  disabled: boolean;
-  onCredential: (credential: string) => Promise<void>;
-  onError: (message: string) => void;
+const SCRIPT_SRC = "https://accounts.google.com/gsi/client";
+const READY_TIMEOUT_MS = 10000;
+
+let googleReady: Promise<GoogleIdentityServices> | null = null;
+
+function ensureScript(): void {
+  if (typeof document === "undefined") return;
+  if (document.querySelector(`script[src="${SCRIPT_SRC}"]`)) return;
+  const script = document.createElement("script");
+  script.src = SCRIPT_SRC;
+  script.async = true;
+  script.defer = true;
+  document.head.appendChild(script);
 }
 
-const GOOGLE_SCRIPT = "https://accounts.google.com/gsi/client";
-const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-
-export function GoogleSignInButton({
-  disabled,
-  onCredential,
-  onError,
-}: GoogleSignInButtonProps) {
-  const buttonContainer = useRef<HTMLDivElement>(null);
-  const [scriptReady, setScriptReady] = useState(false);
-  const [scriptError, setScriptError] = useState("");
-
-  const handleCredential = useCallback(
-    (response: GoogleCredentialResponse) => {
-      if (!response.credential) {
-        onError("Google sign-in did not return a credential. Please try again.");
+function waitForGoogle(): Promise<GoogleIdentityServices> {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const poll = () => {
+      const google = window.google;
+      if (google?.accounts?.id) {
+        resolve(google);
         return;
       }
-      void onCredential(response.credential);
-    },
-    [onCredential, onError],
-  );
-
-  useEffect(() => {
-    const container = buttonContainer.current;
-    if (!scriptReady || !container || !GOOGLE_CLIENT_ID || !window.google) {
-      return;
-    }
-
-    window.google.accounts.id.initialize({
-      client_id: GOOGLE_CLIENT_ID,
-      callback: handleCredential,
-    });
-
-    const renderGoogleButton = () => {
-      if (!buttonContainer.current || !window.google) return;
-      buttonContainer.current.replaceChildren();
-      window.google.accounts.id.renderButton(buttonContainer.current, {
-        theme: "outline",
-        size: "large",
-        text: "continue_with",
-        shape: "rectangular",
-        width: Math.min(Math.floor(container.clientWidth), 400),
-        logo_alignment: "left",
-      });
+      if (Date.now() - started > READY_TIMEOUT_MS) {
+        reject(new Error("Could not load Google sign-in. Please try again."));
+        return;
+      }
+      window.setTimeout(poll, 100);
     };
+    poll();
+  });
+}
 
-    renderGoogleButton();
-    const observer = new ResizeObserver(renderGoogleButton);
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [handleCredential, scriptReady]);
-
-  if (!GOOGLE_CLIENT_ID) {
-    return (
-      <p className="google-signin-unavailable" role="status">
-        Google sign-in is not configured. You can continue with your email and
-        password.
-      </p>
+function getGoogle(): Promise<GoogleIdentityServices> {
+  if (typeof window === "undefined") {
+    return Promise.reject(
+      new Error("Google sign-in is only available in the browser."),
     );
   }
+  if (!googleReady) {
+    ensureScript();
+    googleReady = waitForGoogle().catch((error: unknown) => {
+      googleReady = null;
+      throw error;
+    });
+  }
+  return googleReady;
+}
 
-  return (
-    <div className={`google-signin${disabled ? " is-disabled" : ""}`}>
-      <Script
-        src={GOOGLE_SCRIPT}
-        strategy="afterInteractive"
-        onLoad={() => setScriptReady(true)}
-        onError={() =>
-          setScriptError("Google sign-in could not load. Please try again.")
-        }
-      />
-      {scriptError ? (
-        <p className="form-error" role="alert">{scriptError}</p>
-      ) : (
-        <div
-          ref={buttonContainer}
-          aria-disabled={disabled}
-          aria-busy={disabled}
-          className="google-signin-button"
-        />
-      )}
-      {disabled && !scriptError ? (
-        <span className="google-signin-loading" role="status">
-          Signing in with Google…
-        </span>
-      ) : null}
-    </div>
-  );
+export default function GoogleSignInButton({
+  onCredential,
+  onError,
+}: {
+  onCredential: (credential: string) => void;
+  onError: (message: string) => void;
+}) {
+  const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID ?? "";
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!clientId || !container) return;
+
+    let cancelled = false;
+
+    getGoogle()
+      .then((google) => {
+        if (cancelled) return;
+        google.accounts.id.initialize({
+          client_id: clientId,
+          callback: (response) => {
+            if (response.credential) {
+              onCredential(response.credential);
+            } else {
+              onError("Google did not return a sign-in credential.");
+            }
+          },
+        });
+        google.accounts.id.renderButton(container, {
+          type: "standard",
+          theme: "outline",
+          size: "large",
+          text: "continue_with",
+          shape: "rectangular",
+          logo_alignment: "left",
+          width: 336,
+        });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setFailed(true);
+        onError(
+          error instanceof Error
+            ? error.message
+            : "Could not load Google sign-in. Please try again.",
+        );
+      });
+
+    return () => {
+      cancelled = true;
+      container.innerHTML = "";
+    };
+  }, [clientId, onCredential, onError]);
+
+  if (!clientId || failed) return null;
+
+  return <div className="google-signin" ref={containerRef} />;
 }

@@ -2,8 +2,77 @@ from django.conf import settings
 from django.db import models
 from django.db.models import Q
 from django.db.models.functions import Lower
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 
 from apps.catalogue.models import Product
+
+
+class UserProfile(models.Model):
+    class Role(models.TextChoices):
+        SUPERADMIN = "superadmin", "Superadmin (Developer)"
+        ADMIN = "admin", "Admin (Owner)"
+        STAFF = "staff", "Staff"
+        CUSTOMER = "customer", "Customer"
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        related_name="profile",
+        on_delete=models.CASCADE,
+    )
+    role = models.CharField(
+        max_length=20,
+        choices=Role.choices,
+        default=Role.CUSTOMER,
+        db_index=True,
+    )
+    phone_number = models.CharField(max_length=30, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.user.username} ({self.role})"
+
+
+def get_user_role(user):
+    """
+    Resolves the four system roles:
+    - superadmin: Developer
+    - admin: Owner
+    - staff: Operational staff
+    - customer: Storefront buyer
+    """
+    if not user or not getattr(user, "is_authenticated", False):
+        return None
+    if getattr(user, "is_superuser", False):
+        return str(UserProfile.Role.SUPERADMIN)
+    try:
+        profile = getattr(user, "profile", None)
+        if profile is not None:
+            return str(profile.role)
+    except Exception:
+        pass
+    if getattr(user, "is_staff", False):
+        return str(UserProfile.Role.STAFF)
+    return str(UserProfile.Role.CUSTOMER)
+
+
+@receiver(post_save, sender=settings.AUTH_USER_MODEL)
+def ensure_user_profile(sender, instance, created, **kwargs):
+    if not created:
+        return
+    if UserProfile.objects.filter(user=instance).exists():
+        return
+    initial_role = (
+        UserProfile.Role.SUPERADMIN
+        if instance.is_superuser
+        else UserProfile.Role.STAFF
+        if instance.is_staff
+        else UserProfile.Role.CUSTOMER
+    )
+    profile, _ = UserProfile.objects.get_or_create(user=instance, defaults={"role": initial_role})
+    instance.profile = profile
+
 
 
 class CustomerAccount(models.Model):

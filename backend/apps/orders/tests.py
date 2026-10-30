@@ -840,6 +840,104 @@ class OrderApiTests(TestCase):
         self.assertEqual(staff_response.status_code, status.HTTP_200_OK)
         self.assertEqual(staff_response.data["count"], 1)
 
+    def test_staff_dashboard_metrics_and_payment_list_require_staff(self):
+        created = self.checkout()
+        order = Order.objects.get(public_reference=created.data["public_reference"])
+        payment, _ = create_payment_attempt(order.pk, uuid4())
+        order.payment_status = Order.PaymentStatus.PAID
+        order.status = Order.Status.PROCESSING
+        order.save(update_fields=["payment_status", "status"])
+
+        overview_url = reverse("api:orders:staff-dashboard")
+        payments_url = reverse("api:orders:staff-payments")
+        self.client.force_authenticate(user=self.user)
+        self.assertEqual(
+            self.client.get(overview_url).status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        self.assertEqual(
+            self.client.get(payments_url).status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+        staff_user = get_user_model().objects.create_user(
+            username=uuid4().hex,
+            email="dashboard-staff@example.com",
+            password="Staff-Password-93!",
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=staff_user)
+        overview = self.client.get(overview_url)
+        payments = self.client.get(payments_url)
+
+        self.assertEqual(overview.status_code, status.HTTP_200_OK)
+        self.assertEqual(overview.data["orders_by_status"]["processing"], 1)
+        self.assertEqual(overview.data["orders_by_payment_status"]["paid"], 1)
+        self.assertEqual(overview.data["paid_revenue"], "25.00")
+        self.assertEqual(payments.status_code, status.HTTP_200_OK)
+        payment_item = payments.data["results"][0]
+        self.assertEqual(payment_item["reference"], payment.reference)
+        self.assertEqual(payment_item["order_reference"], str(order.public_reference))
+        self.assertNotIn("authorization_url", payment_item)
+        self.assertNotIn("provider_transaction_id", payment_item)
+
+    def test_delivery_pricing_management_is_superuser_only_and_audited(self):
+        config_url = reverse(
+            "api:orders:superadmin-pricing-configuration-detail",
+            args=[self.pricing.pk],
+        )
+        self.client.force_authenticate(user=self.user)
+        self.assertEqual(
+            self.client.patch(
+                config_url,
+                {"base_fee": "7.25"},
+                format="json",
+            ).status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+        staff_user = get_user_model().objects.create_user(
+            username=uuid4().hex,
+            email="pricing-staff@example.com",
+            password="Secure-Pricing-Staff-Password-92!",
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=staff_user)
+        self.assertEqual(
+            self.client.get(
+                reverse("api:orders:superadmin-pricing-configuration-list")
+            ).status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+        superuser = get_user_model().objects.create_superuser(
+            username=uuid4().hex,
+            email="pricing-root@example.com",
+            password="Secure-Pricing-Root-Password-92!",
+        )
+        self.client.force_authenticate(user=superuser)
+        updated = self.client.patch(
+            config_url,
+            {"base_fee": "7.25", "version": "test-zero-rates-v2"},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, status.HTTP_200_OK)
+        self.assertEqual(updated.data["base_fee"], "7.25")
+
+        invalid = self.client.patch(
+            config_url,
+            {"minimum_fee": "10.00", "maximum_fee": "9.00"},
+            format="json",
+        )
+        self.assertEqual(invalid.status_code, status.HTTP_400_BAD_REQUEST)
+        audit = self.client.get(
+            reverse("api:orders:superadmin-delivery-pricing-audit")
+        )
+        self.assertEqual(audit.status_code, status.HTTP_200_OK)
+        self.assertTrue(
+            any(entry["actor_username"] == superuser.username for entry in audit.data["results"])
+        )
+
     def test_payment_attempt_snapshots_order_amount_and_is_idempotent(self):
         response = self.checkout()
         order = Order.objects.get(public_reference=response.data["public_reference"])
@@ -1916,6 +2014,7 @@ class OrderApiTests(TestCase):
             username=uuid4().hex,
             password="test-password",
             is_staff=True,
+            is_superuser=True,
         )
         self.client.force_authenticate(user=staff_user)
         key = uuid4()
@@ -1982,6 +2081,7 @@ class OrderApiTests(TestCase):
             username=uuid4().hex,
             password="test-password",
             is_staff=True,
+            is_superuser=True,
         )
         self.client.force_authenticate(user=staff_user)
         key = uuid4()
@@ -2041,6 +2141,7 @@ class OrderApiTests(TestCase):
             username=uuid4().hex,
             password="test-password",
             is_staff=True,
+            is_superuser=True,
         )
         self.client.force_authenticate(user=staff_user)
 
@@ -2112,6 +2213,7 @@ class OrderApiTests(TestCase):
             username=uuid4().hex,
             password="test-password",
             is_staff=True,
+            is_superuser=True,
         )
         self.client.force_authenticate(user=staff_user)
         initiate.return_value = {"id": "provider-refund-002", "status": "pending"}

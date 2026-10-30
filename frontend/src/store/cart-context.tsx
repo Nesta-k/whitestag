@@ -1,114 +1,117 @@
 "use client";
 
-/* eslint-disable react-hooks/set-state-in-effect */
-
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
-  useMemo,
   useState,
+  useCallback,
+  ReactNode,
 } from "react";
-import * as cartApi from "@/lib/api/cart";
-import { ApiError } from "@/lib/api/client";
-import { useAuth } from "./auth-context";
+import {
+  getCart,
+  addToCart,
+  updateCartItem,
+  removeCartItem,
+} from "@/lib/api/cart";
 import type { Cart } from "@/types/api";
+import { useAuth } from "./auth-context";
+import { ApiError } from "@/lib/api/client";
 
 interface CartContextValue {
   cart: Cart | null;
-  isLoading: boolean;
-  error: string;
-  refresh: () => Promise<void>;
-  updateQuantity: (itemId: number, quantity: number) => Promise<void>;
-  removeItem: (itemId: number) => Promise<void>;
+  itemCount: number;
+  loading: boolean;
+  error: string | null;
   addItem: (productId: number, quantity?: number) => Promise<void>;
+  updateItem: (itemId: number, quantity: number) => Promise<void>;
+  removeItem: (itemId: number) => Promise<void>;
+  refresh: () => Promise<void>;
 }
 
 const CartContext = createContext<CartContextValue | null>(null);
 
-export function CartProvider({ children }: { children: React.ReactNode }) {
-  const { customer, isLoading: authLoading } = useAuth();
+export function CartProvider({ children }: { children: ReactNode }) {
+  const { token } = useAuth();
   const [cart, setCart] = useState<Cart | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!customer) {
+    if (!token) {
       setCart(null);
-      setError("");
+      setError(null);
       return;
     }
-    setIsLoading(true);
+    setLoading(true);
     try {
-      setCart(await cartApi.getCart());
-      setError("");
+      const data = await getCart();
+      setCart(data);
+      setError(null);
     } catch (requestError) {
+      setCart(null);
       setError(
         requestError instanceof ApiError
-          ? requestError.message
-          : "Could not load your cart.",
+          ? `The cart service returned an error (${requestError.status}).`
+          : requestError instanceof Error
+            ? requestError.message
+            : "Could not load your cart.",
       );
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
-  }, [customer]);
+  }, [token]);
 
   useEffect(() => {
-    if (!authLoading) void refresh();
-  }, [authLoading, refresh]);
+    refresh();
+  }, [refresh]);
 
-  const updateQuantity = useCallback(
-    async (itemId: number, quantity: number) => {
-      await cartApi.updateCartItem(itemId, quantity);
-      await refresh();
-    },
-    [refresh],
-  );
-  const removeItem = useCallback(
-    async (itemId: number) => {
-      await cartApi.removeCartItem(itemId);
-      await refresh();
-    },
-    [refresh],
-  );
   const addItem = useCallback(
     async (productId: number, quantity = 1) => {
-      await cartApi.addCartItem(productId, quantity);
+      await addToCart({ product_id: productId, quantity });
       await refresh();
     },
-    [refresh],
+    [refresh]
   );
 
-  const value = useMemo(
-    () => ({
-      cart,
-      isLoading: authLoading || isLoading,
-      error,
-      refresh,
-      updateQuantity,
-      removeItem,
-      addItem,
-    }),
-    [
-      cart,
-      authLoading,
-      isLoading,
-      error,
-      refresh,
-      updateQuantity,
-      removeItem,
-      addItem,
-    ],
+  const updateItem = useCallback(
+    async (itemId: number, quantity: number) => {
+      await updateCartItem(itemId, quantity);
+      await refresh();
+    },
+    [refresh]
   );
 
-  return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
+  const removeItem = useCallback(
+    async (itemId: number) => {
+      await removeCartItem(itemId);
+      await refresh();
+    },
+    [refresh]
+  );
+
+  const itemCount = cart?.item_count ?? 0;
+
+  return (
+    <CartContext.Provider
+      value={{
+        cart,
+        itemCount,
+        loading,
+        error,
+        addItem,
+        updateItem,
+        removeItem,
+        refresh,
+      }}
+    >
+      {children}
+    </CartContext.Provider>
+  );
 }
 
-export function useCart(): CartContextValue {
-  const context = useContext(CartContext);
-  if (!context) {
-    throw new Error("useCart must be used within CartProvider.");
-  }
-  return context;
+export function useCart() {
+  const ctx = useContext(CartContext);
+  if (!ctx) throw new Error("useCart must be used inside CartProvider");
+  return ctx;
 }

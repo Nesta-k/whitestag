@@ -1,47 +1,29 @@
-import { apiRequest } from "./client";
-import type {
-  AuthenticationResponse,
-  Customer,
-} from "@/types/api";
+import { apiFetch, apiPost } from "./client";
+import type { AuthToken } from "@/types/api";
 
-export function register(
-  email: string,
-  password: string,
-  passwordConfirm: string,
-): Promise<AuthenticationResponse> {
-  return apiRequest("/accounts/register/", {
-    method: "POST",
-    body: JSON.stringify({
-      email,
-      password,
-      password_confirm: passwordConfirm,
-    }),
-  });
+export function register(payload: {
+  email: string;
+  password: string;
+  password_confirm: string;
+}): Promise<AuthToken> {
+  return apiPost<AuthToken>("/api/accounts/register/", payload);
 }
 
-export function login(
-  email: string,
-  password: string,
-): Promise<AuthenticationResponse> {
-  return apiRequest("/accounts/login/", {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  });
+export function login(credentials: {
+  email: string;
+  password: string;
+}): Promise<AuthToken> {
+  return apiPost<AuthToken>("/api/accounts/login/", credentials);
 }
 
-export function loginWithGoogle(
-  credential: string,
-): Promise<AuthenticationResponse> {
-  return apiRequest("/accounts/google/", {
-    method: "POST",
-    body: JSON.stringify({ credential }),
-  });
+export function googleLogin(credential: string): Promise<AuthToken> {
+  return apiPost<AuthToken>("/api/accounts/google/", { credential });
 }
 
 export function logout(): Promise<void> {
-  return apiRequest("/accounts/logout/", { method: "POST" });
+  return apiPost<void>("/api/accounts/logout/", {});
 }
 
-export function getCurrentCustomer(): Promise<Customer> {
-  return apiRequest("/accounts/me/");
+export function getMe(): Promise<AuthToken["customer"]> {
+  return apiFetch<AuthToken["customer"]>("/api/accounts/me/");
 }

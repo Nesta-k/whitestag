@@ -1,18 +1,13 @@
-"use client";
+import Header from "./header";
+import Footer from "./footer";
 
-import { AuthProvider } from "@/store/auth-context";
-import { CartProvider } from "@/store/cart-context";
-import { Header } from "./header";
-import { Footer } from "./footer";
-
-export function SiteShell({ children }: { children: React.ReactNode }) {
+export default function SiteShell({ children }: { children: React.ReactNode }) {
   return (
-    <AuthProvider>
-      <CartProvider>
-        <Header />
-        <main id="main-content" className="site-main">{children}</main>
-        <Footer />
-      </CartProvider>
-    </AuthProvider>
+    <>
+      <Header />
+      <main className="site-main">{children}</main>
+      <Footer />
+    </>
   );
 }
+

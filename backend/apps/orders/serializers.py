@@ -1,6 +1,15 @@
 from rest_framework import serializers
 
-from .models import DeliveryZone, Order, OrderItem, Payment, PaymentRefund
+from .models import (
+    DeliveryPricingAuditLog,
+    DeliveryPricingConfiguration,
+    DeliverySurcharge,
+    DeliveryZone,
+    Order,
+    OrderItem,
+    Payment,
+    PaymentRefund,
+)
 
 
 class CheckoutInputSerializer(serializers.Serializer):
@@ -35,6 +44,158 @@ class DeliveryZoneSerializer(serializers.ModelSerializer):
     class Meta:
         model = DeliveryZone
         fields = ["code", "name", "city", "region", "estimated_distance_km"]
+        read_only_fields = fields
+
+
+class SuperuserDeliveryPricingConfigurationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DeliveryPricingConfiguration
+        fields = [
+            "id",
+            "version",
+            "is_active",
+            "base_fee",
+            "rate_per_km",
+            "rate_per_kg",
+            "minimum_fee",
+            "maximum_fee",
+            "currency",
+            "rounding_mode",
+            "review_weight_threshold_kg",
+            "review_distance_threshold_km",
+            "review_fee_threshold",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "updated_at"]
+
+    def validate(self, attrs):
+        if self.instance:
+            commercial_fields = (
+                "base_fee",
+                "rate_per_km",
+                "rate_per_kg",
+                "minimum_fee",
+                "maximum_fee",
+                "rounding_mode",
+                "currency",
+            )
+            rate_changed = any(
+                field in attrs
+                and attrs[field] != getattr(self.instance, field)
+                for field in commercial_fields
+            )
+            version = attrs.get("version", self.instance.version)
+            if rate_changed and version == self.instance.version:
+                raise serializers.ValidationError(
+                    {
+                        "version": (
+                            "Change the formula version when changing commercial rates."
+                        )
+                    }
+                )
+        minimum_fee = attrs.get(
+            "minimum_fee",
+            getattr(self.instance, "minimum_fee", None),
+        )
+        maximum_fee = attrs.get(
+            "maximum_fee",
+            getattr(self.instance, "maximum_fee", None),
+        )
+        if maximum_fee is not None and minimum_fee is not None and maximum_fee < minimum_fee:
+            raise serializers.ValidationError(
+                {"maximum_fee": "Maximum fee must be at least the minimum fee."}
+            )
+        if attrs.get("is_active", False):
+            active_configurations = DeliveryPricingConfiguration.objects.filter(
+                is_active=True,
+            )
+            if self.instance:
+                active_configurations = active_configurations.exclude(
+                    pk=self.instance.pk
+                )
+            if active_configurations.exists():
+                raise serializers.ValidationError(
+                    {"is_active": "Deactivate the current active formula first."}
+                )
+        return attrs
+
+
+class SuperuserDeliveryZoneSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DeliveryZone
+        fields = [
+            "id",
+            "code",
+            "name",
+            "city",
+            "region",
+            "estimated_distance_km",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        city = attrs.get("city", getattr(self.instance, "city", "")).strip()
+        region = attrs.get("region", getattr(self.instance, "region", "")).strip()
+        zones = DeliveryZone.objects.filter(
+            city__iexact=city,
+            region__iexact=region,
+        )
+        if self.instance:
+            zones = zones.exclude(pk=self.instance.pk)
+        if zones.exists():
+            raise serializers.ValidationError(
+                {"city": "A zone already exists for this city and region."}
+            )
+        return attrs
+
+
+class SuperuserDeliverySurchargeSerializer(serializers.ModelSerializer):
+    zone_id = serializers.PrimaryKeyRelatedField(
+        source="zone",
+        queryset=DeliveryZone.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+    zone_code = serializers.CharField(source="zone.code", read_only=True, allow_null=True)
+
+    class Meta:
+        model = DeliverySurcharge
+        fields = [
+            "id",
+            "code",
+            "name",
+            "amount",
+            "zone_id",
+            "zone_code",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "zone_code", "created_at", "updated_at"]
+
+
+class DeliveryPricingAuditLogSerializer(serializers.ModelSerializer):
+    actor_username = serializers.CharField(
+        source="actor.username",
+        read_only=True,
+        allow_null=True,
+    )
+
+    class Meta:
+        model = DeliveryPricingAuditLog
+        fields = [
+            "configuration_type",
+            "object_id",
+            "object_label",
+            "action",
+            "actor_username",
+            "before_state",
+            "after_state",
+            "created_at",
+        ]
         read_only_fields = fields
 
 
@@ -149,6 +310,29 @@ class PaymentVerificationResponseSerializer(serializers.Serializer):
     reference = serializers.CharField()
     status = serializers.CharField()
     outcome = serializers.CharField()
+
+
+class StaffPaymentSerializer(serializers.ModelSerializer):
+    order_reference = serializers.UUIDField(source="order.public_reference")
+    order_status = serializers.CharField(source="order.status")
+    payment_status = serializers.CharField(source="order.payment_status")
+    customer_email = serializers.EmailField(source="order.shipping_email")
+
+    class Meta:
+        model = Payment
+        fields = [
+            "reference",
+            "status",
+            "amount",
+            "currency",
+            "order_reference",
+            "order_status",
+            "payment_status",
+            "customer_email",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
 
 
 class PaymentRefundResponseSerializer(serializers.ModelSerializer):

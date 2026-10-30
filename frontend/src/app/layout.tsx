@@ -1,26 +1,25 @@
 import type { Metadata } from "next";
-import { SiteShell } from "@/components/layout/site-shell";
+import Providers from "@/components/providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: {
-    default: "WhiteStag | Automotive parts for Ghana",
-    template: "%s | WhiteStag",
+  title: "WhiteStag | Parts & vehicles",
+  description: "A better way to find the parts and vehicles you need.",
+  icons: {
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico",
   },
-  description:
-    "Find trusted automotive spare parts and support for the road ahead with WhiteStag.",
 };
 
 export default function RootLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   return (
     <html lang="en">
-      <body>
-        <a href="#main-content" className="skip-link">Skip to content</a>
-        <SiteShell>{children}</SiteShell>
+      <body suppressHydrationWarning>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

@@ -4,28 +4,45 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { getCategories } from "@/lib/api/catalogue";
+import type { Category } from "@/types/api";
+import { formatPrice } from "@/lib/format";
 import { useAuth } from "@/store/auth-context";
 import { useCart } from "@/store/cart-context";
-import type { Category } from "@/types/api";
+import { useWishlist } from "@/store/wishlist-context";
 
-const primaryLinks = [
+const navLinks = [
   { href: "/", label: "Home" },
+  { href: "/products", label: "Shop" },
   { href: "/vehicles", label: "Vehicles" },
-  { href: "/products", label: "Spare Parts" },
-  { href: "/#brands", label: "Brands" },
   { href: "/promotions", label: "Promotions" },
-  { href: "/#preorders", label: "Preorders" },
   { href: "/#how-it-works", label: "About Us" },
   { href: "/#support", label: "Contact" },
 ];
 
-export function Header() {
-  const { customer, signOut } = useAuth();
-  const { cart } = useCart();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [signOutError, setSignOutError] = useState("");
+function CartTotal({ className }: { className?: string }) {
+  const { cart, itemCount } = useCart();
+  const total = (cart?.items ?? []).reduce((sum, item) => {
+    if (!item.product) return sum;
+    const price = Number(item.product.price);
+    return Number.isFinite(price) ? sum + price * item.quantity : sum;
+  }, 0);
+
+  if (itemCount === 0) return null;
+
+  return (
+    <span className={className}>
+      {formatPrice(total.toFixed(2), "GHS")}
+    </span>
+  );
+}
+
+export default function Header() {
+  const { user, signOut } = useAuth();
+  const { itemCount } = useCart();
+  const { count: wishlistCount } = useWishlist();
   const [categories, setCategories] = useState<Category[]>([]);
-  const cartCount = cart?.item_count ?? 0;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [categoriesOpen, setCategoriesOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -41,130 +58,213 @@ export function Header() {
     };
   }, []);
 
-  async function handleSignOut() {
-    setSignOutError("");
-    try {
-      await signOut();
-    } catch (error) {
-      setSignOutError(error instanceof Error ? error.message : "Sign-out could not be confirmed by the server.");
-    }
-  }
-
   return (
-    <header className="site-header">
-      <div className="header-main page-container">
-        <button
-          type="button"
-          className="menu-toggle"
-          aria-expanded={menuOpen}
-          aria-controls="primary-navigation"
-          onClick={() => setMenuOpen((open) => !open)}
-        >
-          <span className="sr-only">{menuOpen ? "Close menu" : "Open menu"}</span>
-          <span aria-hidden="true">{menuOpen ? "×" : "☰"}</span>
-        </button>
-        <Link className="brand-lockup" href="/" aria-label="WhiteStag home">
-          <Image
-            className="brand-logo"
-            src="/whitestag%20logo.svg"
-            alt=""
-            width={119}
-            height={74}
-            priority
-          />
-          <span className="header-brand-copy">
-            <strong>WhiteStag</strong>
-            <small>DRIVE · MOVE · GROW</small>
-          </span>
-        </Link>
-        <form className="header-search" action="/products" method="get" role="search">
-          <label className="sr-only" htmlFor="header-search-field">Search the WhiteStag catalogue</label>
-          <input
-            id="header-search-field"
-            name="search"
-            type="search"
-            placeholder="Search for parts, vehicles, brands..."
-            autoComplete="off"
-          />
-          <button type="submit" aria-label="Search catalogue">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="10.8" cy="10.8" r="6.8" />
-              <path d="m16 16 4.5 4.5" />
-            </svg>
-          </button>
-        </form>
-        <div className="header-actions">
-          <Link className="header-account" href="/account">
-            <span className="header-action-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5" /><path d="M5 20c.7-3.4 3.1-5.2 7-5.2s6.3 1.8 7 5.2" /></svg>
-            </span>
-            <span>{customer ? "My account" : "Account"}</span>
-          </Link>
-          <button
-            className="header-wishlist"
-            type="button"
-            disabled
-            aria-label="Wishlist unavailable"
-            title="Wishlist is not available yet"
-          >
-            <span className="header-action-icon" aria-hidden="true">♡</span>
-            <span>Wishlist</span>
-          </button>
-          <Link className="cart-link" href="/cart" aria-label={`Cart, ${cartCount} items`}>
-            <span className="header-action-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M3 4h2l2.2 11.1a2 2 0 0 0 2 1.6h8.5a2 2 0 0 0 1.9-1.5L21 8H6" /><circle cx="10" cy="20" r="1" /><circle cx="18" cy="20" r="1" /></svg>
-            </span>
-            <span>Cart</span>
-            <span className="cart-count" aria-label={`${cartCount} items`}>{cartCount}</span>
-          </Link>
-          {customer ? (
-            <button type="button" className="signout-link" onClick={handleSignOut}>
-              Sign out
-            </button>
-          ) : null}
+    <>
+      <header className="ws-header">
+        <div className="ws-topbar">
+          <div className="ws-topbar-inner">
+            <Link className="ws-topbar-note" href="/#support">
+              Customer support &amp; fitment advice — talk to our team
+            </Link>
+            <span className="ws-topbar-currency">Prices in Ghana Cedis (GHS)</span>
+          </div>
         </div>
-      </div>
-      <div className={`header-navigation-bar ${menuOpen ? "is-open" : ""}`}>
-        <div className="header-navigation-inner page-container">
-          <details className="all-categories-menu">
-            <summary>
-              <span aria-hidden="true">☰</span>
-              <span>All Categories</span>
-              <span aria-hidden="true">⌄</span>
-            </summary>
-            <div className="all-categories-dropdown">
-              <Link href="/products">Browse all parts</Link>
-              {categories.map((category) => (
-                <Link
-                  href={`/categories/${encodeURIComponent(category.slug)}`}
-                  key={category.id}
-                >
-                  {category.name}
-                </Link>
-              ))}
-              {categories.length === 0 ? (
-                <span className="category-menu-note">Catalogue categories will appear here when available.</span>
-              ) : null}
-            </div>
-          </details>
-          <nav
-            id="primary-navigation"
-            className={`primary-navigation ${menuOpen ? "is-open" : ""}`}
-            aria-label="Main navigation"
-          >
-            {primaryLinks.map((link) => (
-              <Link key={link.label} href={link.href} onClick={() => setMenuOpen(false)}>
-                {link.label}
+
+        <div className="ws-mainbar">
+          <div className="ws-mainbar-inner">
+            <Link aria-label="WhiteStag home" className="ws-logo" href="/">
+              <Image
+                alt=""
+                className="ws-logo-mark"
+                height={74}
+                priority
+                src="/logo.svg"
+                unoptimized
+                width={119}
+              />
+              <span className="ws-logo-text">
+                <strong>WHITESTAG</strong>
+                <small>Parts &amp; vehicles</small>
+              </span>
+            </Link>
+
+            <form className="ws-search" action="/products" method="get" role="search">
+              <label className="sr-only" htmlFor="ws-search-input">
+                Search the catalogue
+              </label>
+              <input
+                id="ws-search-input"
+                type="search"
+                name="search"
+                placeholder="Search parts, vehicles, or brands…"
+                autoComplete="off"
+              />
+              <button type="submit" aria-label="Search the catalogue">
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+                  <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="2" />
+                  <path d="M16.5 16.5 21 21" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              </button>
+            </form>
+
+            <div className="ws-actions">
+              <Link className="ws-action" href="/wishlist" aria-label={`Wishlist (${wishlistCount} items)`}>
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22">
+                  <path
+                    d="M12 20s-7-4.4-7-9.3A4.2 4.2 0 0 1 12 7.8a4.2 4.2 0 0 1 7 2.9C19 15.6 12 20 12 20Z"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span className="ws-action-label">Wishlist</span>
+                {wishlistCount > 0 && <span className="ws-badge">{wishlistCount}</span>}
               </Link>
-            ))}
-          </nav>
-          <Link className="header-location" href="/vehicles">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 1 1 14 0Z" /><circle cx="12" cy="10" r="2.2" /></svg>
-            <span>Showroom</span>
-          </Link>
+
+              {user ? (
+                <div className="ws-account">
+                  <Link className="ws-action" href="/account" aria-label="Your account">
+                    <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22">
+                      <circle cx="12" cy="8.5" r="3.6" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                      <path d="M5 19.5a7 7 0 0 1 14 0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                    </svg>
+                    <span className="ws-action-label">Account</span>
+                  </Link>
+                  <button className="ws-signout" type="button" onClick={() => signOut()}>
+                    Sign out
+                  </button>
+                </div>
+              ) : (
+                <Link className="ws-action" href="/account" aria-label="Sign in">
+                  <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22">
+                    <circle cx="12" cy="8.5" r="3.6" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                    <path d="M5 19.5a7 7 0 0 1 14 0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                  </svg>
+                  <span className="ws-action-label">Sign in</span>
+                </Link>
+              )}
+
+              <Link className="ws-action ws-cart" href="/cart" aria-label={`Cart (${itemCount} items)`}>
+                <span className="ws-cart-icon">
+                  <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22">
+                    <path
+                      d="M4 6h2.2l2 10.2h9.4L19.5 9H7"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <circle cx="10" cy="19.6" r="1.3" fill="currentColor" />
+                    <circle cx="17" cy="19.6" r="1.3" fill="currentColor" />
+                  </svg>
+                  {itemCount > 0 && <span className="ws-badge">{itemCount}</span>}
+                </span>
+                <span className="ws-cart-copy">
+                  <small>Cart</small>
+                  <CartTotal className="ws-cart-total" />
+                </span>
+              </Link>
+            </div>
+
+            <button
+              className="ws-menu-toggle"
+              type="button"
+              aria-expanded={menuOpen}
+              aria-controls="ws-mobile-menu"
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22">
+                <path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+              </svg>
+              <span className="sr-only">Menu</span>
+            </button>
+          </div>
         </div>
-      </div>
-      {signOutError ? <p className="header-feedback page-container" role="status">{signOutError}</p> : null}
-    </header>
+      </header>
+
+      <nav className="ws-nav" aria-label="Main navigation">
+        <div className="ws-nav-inner">
+          <div
+            className="ws-categories"
+            onMouseLeave={() => setCategoriesOpen(false)}
+          >
+            <button
+              className="ws-categories-trigger"
+              type="button"
+              aria-expanded={categoriesOpen}
+              onClick={() => setCategoriesOpen((open) => !open)}
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+                <path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+              </svg>
+              All Categories
+            </button>
+            {categoriesOpen && categories.length > 0 && (
+              <ul className="ws-categories-menu">
+                {categories.map((category) => (
+                  <li key={category.id}>
+                    <Link href={`/products?category=${encodeURIComponent(category.slug)}`}>
+                      {category.name}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <ul className="ws-nav-links">
+            {navLinks.map((link) => (
+              <li key={link.href}>
+                <Link href={link.href}>{link.label}</Link>
+              </li>
+            ))}
+          </ul>
+
+          <p className="ws-nav-note">WhiteStag automotive parts &amp; vehicles</p>
+        </div>
+      </nav>
+
+      {menuOpen && (
+        <div className="ws-mobile-menu" id="ws-mobile-menu">
+          <form className="ws-search ws-search-mobile" action="/products" method="get" role="search">
+            <input type="search" name="search" placeholder="Search the catalogue…" autoComplete="off" />
+            <button type="submit" aria-label="Search the catalogue">
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+                <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="2" />
+                <path d="M16.5 16.5 21 21" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+          </form>
+          <ul>
+            {navLinks.map((link) => (
+              <li key={link.href}>
+                <Link href={link.href} onClick={() => setMenuOpen(false)}>
+                  {link.label}
+                </Link>
+              </li>
+            ))}
+          </ul>
+          {categories.length > 0 && (
+            <>
+              <p className="ws-mobile-heading">All categories</p>
+              <ul className="ws-mobile-categories">
+                {categories.map((category) => (
+                  <li key={category.id}>
+                    <Link
+                      href={`/products?category=${encodeURIComponent(category.slug)}`}
+                      onClick={() => setMenuOpen(false)}
+                    >
+                      {category.name}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+    </>
   );
 }

@@ -1,8 +1,9 @@
 import hashlib
 import json
+from decimal import Decimal
 from uuid import UUID
 
-from django.db.models import Prefetch
+from django.db.models import Count, F, Prefetch, Q, Sum
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status
@@ -12,7 +13,11 @@ from rest_framework.exceptions import (
     PermissionDenied,
     ValidationError,
 )
-from rest_framework.generics import ListAPIView
+from rest_framework.generics import (
+    ListAPIView,
+    ListCreateAPIView,
+    RetrieveUpdateAPIView,
+)
 from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -20,9 +25,21 @@ from rest_framework.views import APIView
 
 from apps.catalogue.pagination import CataloguePagination
 from apps.customers.models import Cart, CustomerAccount
+from apps.customers.permissions import IsAdminOrSuperadmin, IsSuperuser
 from apps.inventory.services import InsufficientStock
+from apps.inventory.models import InventoryRecord
+from apps.inventory.serializers import InventoryRecordSerializer
 
-from .models import DeliveryZone, Order, OrderItem, Payment, PaymentRefund
+from .models import (
+    DeliveryPricingAuditLog,
+    DeliveryPricingConfiguration,
+    DeliverySurcharge,
+    DeliveryZone,
+    Order,
+    OrderItem,
+    Payment,
+    PaymentRefund,
+)
 from .pagination import OrderPagination
 from .permissions import HasCustomerAccount
 from .paystack_client import (
@@ -50,11 +67,16 @@ from .serializers import (
     CheckoutInputSerializer,
     DeliveryQuoteInputSerializer,
     DeliveryQuoteSerializer,
+    DeliveryPricingAuditLogSerializer,
+    SuperuserDeliveryPricingConfigurationSerializer,
+    SuperuserDeliverySurchargeSerializer,
+    SuperuserDeliveryZoneSerializer,
     DeliveryZoneSerializer,
     OrderSerializer,
     PaymentInitializationResponseSerializer,
     PaymentVerificationResponseSerializer,
     PaymentRefundResponseSerializer,
+    StaffPaymentSerializer,
 )
 from .services import (
     CheckoutConflict,
@@ -462,8 +484,273 @@ class StaffOrderCompleteView(APIView):
         return Response(OrderSerializer(order).data)
 
 
-class StaffPaymentRefundView(APIView):
+class StaffPaymentListView(ListAPIView):
     permission_classes = [IsAdminUser]
+    serializer_class = StaffPaymentSerializer
+    pagination_class = OrderPagination
+
+    def get_queryset(self):
+        queryset = Payment.objects.select_related("order").order_by(
+            "-created_at",
+            "-pk",
+        )
+        status_filter = self.request.query_params.get("status")
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        search = self.request.query_params.get("search", "").strip()
+        if search:
+            queryset = queryset.filter(
+                Q(reference__icontains=search)
+                | Q(order__shipping_email__icontains=search)
+                | Q(order__public_reference__icontains=search)
+            )
+        return queryset
+
+
+class StaffDeliveryPricingView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        def serialize_configuration(configuration):
+            return {
+                "version": configuration.version,
+                "id": configuration.pk,
+                "is_active": configuration.is_active,
+                "currency": configuration.currency,
+                "base_fee": str(configuration.base_fee),
+                "rate_per_km": str(configuration.rate_per_km),
+                "rate_per_kg": str(configuration.rate_per_kg),
+                "minimum_fee": str(configuration.minimum_fee),
+                "maximum_fee": (
+                    str(configuration.maximum_fee)
+                    if configuration.maximum_fee is not None
+                    else None
+                ),
+                "rounding_mode": configuration.rounding_mode,
+                "review_weight_threshold_kg": (
+                    str(configuration.review_weight_threshold_kg)
+                    if configuration.review_weight_threshold_kg is not None
+                    else None
+                ),
+                "review_distance_threshold_km": (
+                    str(configuration.review_distance_threshold_km)
+                    if configuration.review_distance_threshold_km is not None
+                    else None
+                ),
+                "review_fee_threshold": (
+                    str(configuration.review_fee_threshold)
+                    if configuration.review_fee_threshold is not None
+                    else None
+                ),
+            }
+        configurations = list(
+            DeliveryPricingConfiguration.objects.order_by("-updated_at", "-pk")
+        )
+        active_configuration = next(
+            (serialize_configuration(item) for item in configurations if item.is_active),
+            None,
+        )
+        zones = DeliveryZone.objects.order_by("region", "city", "name")
+        surcharges = DeliverySurcharge.objects.select_related("zone").order_by(
+            "name",
+            "pk",
+        )
+        return Response(
+            {
+                "active_configuration": active_configuration,
+                "configurations": [
+                    serialize_configuration(item) for item in configurations
+                ],
+                "zones": [
+                    {
+                        "id": zone.pk,
+                        "code": zone.code,
+                        "name": zone.name,
+                        "city": zone.city,
+                        "region": zone.region,
+                        "estimated_distance_km": (
+                            str(zone.estimated_distance_km)
+                            if zone.estimated_distance_km is not None
+                            else None
+                        ),
+                        "is_active": zone.is_active,
+                    }
+                    for zone in zones
+                ],
+                "surcharges": [
+                    {
+                        "id": surcharge.pk,
+                        "code": surcharge.code,
+                        "name": surcharge.name,
+                        "amount": str(surcharge.amount),
+                        "zone_code": (
+                            surcharge.zone.code if surcharge.zone else None
+                        ),
+                        "zone_id": surcharge.zone_id,
+                        "is_active": surcharge.is_active,
+                    }
+                    for surcharge in surcharges
+                ],
+            }
+        )
+
+
+class SuperuserPricingAuditMixin:
+    audit_type = None
+
+    def _record_audit(self, instance, action, before_state, after_state):
+        DeliveryPricingAuditLog.objects.create(
+            configuration_type=self.audit_type,
+            object_id=str(instance.pk),
+            object_label=str(instance),
+            action=action,
+            actor=self.request.user,
+            before_state=before_state,
+            after_state=after_state,
+        )
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        self._record_audit(
+            instance,
+            DeliveryPricingAuditLog.Action.CREATED,
+            None,
+            serializer.__class__(instance).data,
+        )
+
+    def perform_update(self, serializer):
+        before_state = serializer.__class__(serializer.instance).data
+        instance = serializer.save()
+        after_state = serializer.__class__(instance).data
+        if before_state != after_state:
+            self._record_audit(
+                instance,
+                DeliveryPricingAuditLog.Action.UPDATED,
+                before_state,
+                after_state,
+            )
+
+
+class SuperuserPricingConfigurationListCreateView(
+    SuperuserPricingAuditMixin,
+    ListCreateAPIView,
+):
+    permission_classes = [IsAdminOrSuperadmin]
+    serializer_class = SuperuserDeliveryPricingConfigurationSerializer
+    pagination_class = CataloguePagination
+    queryset = DeliveryPricingConfiguration.objects.order_by("-updated_at", "-pk")
+    audit_type = DeliveryPricingAuditLog.ConfigurationType.PRICING
+
+
+class SuperuserPricingConfigurationDetailView(
+    SuperuserPricingAuditMixin,
+    RetrieveUpdateAPIView,
+):
+    permission_classes = [IsAdminOrSuperadmin]
+    serializer_class = SuperuserDeliveryPricingConfigurationSerializer
+    queryset = DeliveryPricingConfiguration.objects.all()
+    audit_type = DeliveryPricingAuditLog.ConfigurationType.PRICING
+
+
+class SuperuserDeliveryZoneListCreateView(
+    SuperuserPricingAuditMixin,
+    ListCreateAPIView,
+):
+    permission_classes = [IsAdminOrSuperadmin]
+    serializer_class = SuperuserDeliveryZoneSerializer
+    pagination_class = CataloguePagination
+    queryset = DeliveryZone.objects.order_by("region", "city", "name")
+    audit_type = DeliveryPricingAuditLog.ConfigurationType.ZONE
+
+
+class SuperuserDeliveryZoneDetailView(
+    SuperuserPricingAuditMixin,
+    RetrieveUpdateAPIView,
+):
+    permission_classes = [IsAdminOrSuperadmin]
+    serializer_class = SuperuserDeliveryZoneSerializer
+    queryset = DeliveryZone.objects.all()
+    audit_type = DeliveryPricingAuditLog.ConfigurationType.ZONE
+
+
+class SuperuserDeliverySurchargeListCreateView(
+    SuperuserPricingAuditMixin,
+    ListCreateAPIView,
+):
+    permission_classes = [IsAdminOrSuperadmin]
+    serializer_class = SuperuserDeliverySurchargeSerializer
+    pagination_class = CataloguePagination
+    queryset = DeliverySurcharge.objects.select_related("zone").order_by("name", "pk")
+    audit_type = DeliveryPricingAuditLog.ConfigurationType.SURCHARGE
+
+
+class SuperuserDeliverySurchargeDetailView(
+    SuperuserPricingAuditMixin,
+    RetrieveUpdateAPIView,
+):
+    permission_classes = [IsAdminOrSuperadmin]
+    serializer_class = SuperuserDeliverySurchargeSerializer
+    queryset = DeliverySurcharge.objects.select_related("zone").all()
+    audit_type = DeliveryPricingAuditLog.ConfigurationType.SURCHARGE
+
+
+class SuperuserDeliveryPricingAuditListView(ListAPIView):
+    permission_classes = [IsAdminOrSuperadmin]
+    serializer_class = DeliveryPricingAuditLogSerializer
+    pagination_class = CataloguePagination
+    queryset = DeliveryPricingAuditLog.objects.select_related("actor").all()
+
+
+class StaffDashboardOverviewView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request):
+        order_status_counts = {
+            entry["status"]: entry["count"]
+            for entry in Order.objects.values("status").annotate(count=Count("pk"))
+        }
+        order_payment_counts = {
+            entry["payment_status"]: entry["count"]
+            for entry in Order.objects.values("payment_status").annotate(
+                count=Count("pk")
+            )
+        }
+        paid_revenue = (
+            Order.objects.filter(payment_status=Order.PaymentStatus.PAID)
+            .exclude(status__in=[Order.Status.CANCELLED, Order.Status.EXPIRED])
+            .aggregate(value=Sum("total"))["value"]
+        )
+        paid_revenue = paid_revenue or Decimal("0.00")
+        recent_orders = _order_queryset()[:8]
+        low_stock = (
+            InventoryRecord.objects.select_related("product")
+            .filter(available_quantity__lte=F("reorder_threshold"))
+            .order_by("available_quantity", "product__name")[:10]
+        )
+        low_stock_count = InventoryRecord.objects.filter(
+            available_quantity__lte=F("reorder_threshold")
+        ).count()
+        return Response(
+            {
+                "orders_by_status": order_status_counts,
+                "orders_by_payment_status": order_payment_counts,
+                "paid_revenue": f"{paid_revenue:.2f}",
+                "currency": "GHS",
+                "recent_orders": OrderSerializer(recent_orders, many=True).data,
+                "low_stock": InventoryRecordSerializer(
+                    low_stock,
+                    many=True,
+                ).data,
+                "low_stock_count": low_stock_count,
+                "unavailable_features": [
+                    "preorders",
+                ],
+            }
+        )
+
+
+class StaffPaymentRefundView(APIView):
+    permission_classes = [IsAdminOrSuperadmin]
 
     def post(self, request, payment_reference):
         key_value = request.headers.get("Idempotency-Key", "")

@@ -1,4 +1,11 @@
-from decimal import Decimal, ROUND_DOWN, ROUND_HALF_EVEN, ROUND_HALF_UP, ROUND_UP
+from decimal import (
+    Decimal,
+    InvalidOperation,
+    ROUND_DOWN,
+    ROUND_HALF_EVEN,
+    ROUND_HALF_UP,
+    ROUND_UP,
+)
 
 from django.db.models import Q
 
@@ -107,6 +114,23 @@ def _valid_product_weight(product):
     )
 
 
+def _coerce_decimal(value):
+    if value is None:
+        return None
+    try:
+        decimal_value = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if not decimal_value.is_finite():
+        return None
+    return decimal_value
+
+
+def _has_positive_price(product):
+    price = _coerce_decimal(product.price)
+    return price is not None and price > 0
+
+
 def _configuration_inputs(configuration):
     return {
         "base_fee": _decimal_text(configuration.base_fee),
@@ -193,8 +217,7 @@ def calculate_delivery_pricing(
             product.publication_status != Product.PublicationStatus.PUBLISHED
             or product.product_type != Product.ProductType.SPARE_PART
             or product.sales_method != Product.SalesMethod.DIRECT_PURCHASE
-            or product.price is None
-            or product.price <= 0
+            or not _has_positive_price(product)
             or product.currency != configuration.currency
         )
     ]
@@ -363,7 +386,10 @@ def calculate_delivery_pricing(
         return _apply_configuration(quote, configuration)
 
     subtotal = sum(
-        (product.price * quantity for product, quantity in lines),
+        (
+            (_coerce_decimal(product.price) or Decimal("0")) * quantity
+            for product, quantity in lines
+        ),
         Decimal("0"),
     )
     return {

@@ -1,29 +1,21 @@
-import type { InputHTMLAttributes } from "react";
+import React from "react";
 
-interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
-  label: string;
+interface Props extends React.InputHTMLAttributes<HTMLInputElement> {
+  label?: string;
   error?: string;
 }
 
-export function Input({ label, id, error, className = "", ...props }: InputProps) {
-  const inputId = id ?? props.name;
+export default function Input({ label, error, id, className = "", ...props }: Props) {
   return (
-    <div className="field">
-      <label className="field-label" htmlFor={inputId}>
-        {label}
-      </label>
-      <input
-        id={inputId}
-        className={`input ${error ? "input-error" : ""} ${className}`.trim()}
-        aria-invalid={Boolean(error)}
-        aria-describedby={error ? `${inputId}-error` : undefined}
-        {...props}
-      />
-      {error ? (
-        <p className="field-error" id={`${inputId}-error`}>
-          {error}
-        </p>
-      ) : null}
+    <div className={`field ${className}`}>
+      {label && (
+        <label htmlFor={id} className="field-label">
+          {label}
+        </label>
+      )}
+      <input id={id} className={`field-input ${error ? "field-input--error" : ""}`} {...props} />
+      {error && <p className="field-error">{error}</p>}
     </div>
   );
 }
+

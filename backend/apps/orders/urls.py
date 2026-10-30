@@ -11,8 +11,18 @@ from .views import (
     PaystackWebhookView,
     PaymentVerificationView,
     StaffOrderCompleteView,
+    StaffDashboardOverviewView,
+    StaffDeliveryPricingView,
     StaffOrderListView,
+    StaffPaymentListView,
     StaffPaymentRefundView,
+    SuperuserDeliveryPricingAuditListView,
+    SuperuserDeliverySurchargeDetailView,
+    SuperuserDeliverySurchargeListCreateView,
+    SuperuserDeliveryZoneDetailView,
+    SuperuserDeliveryZoneListCreateView,
+    SuperuserPricingConfigurationDetailView,
+    SuperuserPricingConfigurationListCreateView,
 )
 
 
@@ -22,6 +32,52 @@ urlpatterns = [
     path("checkout/", CheckoutView.as_view(), name="checkout"),
     path("delivery-zones/", DeliveryZoneListView.as_view(), name="delivery-zone-list"),
     path("delivery-quote/", DeliveryQuoteView.as_view(), name="delivery-quote"),
+    path(
+        "staff/dashboard/",
+        StaffDashboardOverviewView.as_view(),
+        name="staff-dashboard",
+    ),
+    path("staff/payments/", StaffPaymentListView.as_view(), name="staff-payments"),
+    path(
+        "staff/delivery-pricing/",
+        StaffDeliveryPricingView.as_view(),
+        name="staff-delivery-pricing",
+    ),
+    path(
+        "superadmin/delivery-pricing/configurations/",
+        SuperuserPricingConfigurationListCreateView.as_view(),
+        name="superadmin-pricing-configuration-list",
+    ),
+    path(
+        "superadmin/delivery-pricing/configurations/<int:pk>/",
+        SuperuserPricingConfigurationDetailView.as_view(),
+        name="superadmin-pricing-configuration-detail",
+    ),
+    path(
+        "superadmin/delivery-pricing/zones/",
+        SuperuserDeliveryZoneListCreateView.as_view(),
+        name="superadmin-delivery-zone-list",
+    ),
+    path(
+        "superadmin/delivery-pricing/zones/<int:pk>/",
+        SuperuserDeliveryZoneDetailView.as_view(),
+        name="superadmin-delivery-zone-detail",
+    ),
+    path(
+        "superadmin/delivery-pricing/surcharges/",
+        SuperuserDeliverySurchargeListCreateView.as_view(),
+        name="superadmin-delivery-surcharge-list",
+    ),
+    path(
+        "superadmin/delivery-pricing/surcharges/<int:pk>/",
+        SuperuserDeliverySurchargeDetailView.as_view(),
+        name="superadmin-delivery-surcharge-detail",
+    ),
+    path(
+        "superadmin/delivery-pricing/audit/",
+        SuperuserDeliveryPricingAuditListView.as_view(),
+        name="superadmin-delivery-pricing-audit",
+    ),
     path(
         "payments/paystack/webhook/",
         PaystackWebhookView.as_view(),

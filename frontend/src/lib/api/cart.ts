@@ -1,30 +1,25 @@
-import { apiRequest } from "./client";
+import { apiFetch, apiPost, apiPatch, apiDelete } from "./client";
 import type { Cart, CartItem } from "@/types/api";
 
 export function getCart(): Promise<Cart> {
-  return apiRequest("/cart/");
+  return apiFetch<Cart>("/api/cart/");
 }
 
-export function addCartItem(
-  productId: number,
-  quantity: number,
-): Promise<CartItem> {
-  return apiRequest("/cart/items/", {
-    method: "POST",
-    body: JSON.stringify({ product_id: productId, quantity }),
-  });
+export function addToCart(payload: {
+  product_id: number;
+  quantity: number;
+}): Promise<CartItem> {
+  return apiPost<CartItem>("/api/cart/items/", payload);
 }
 
 export function updateCartItem(
   itemId: number,
-  quantity: number,
+  quantity: number
 ): Promise<CartItem> {
-  return apiRequest(`/cart/items/${itemId}/`, {
-    method: "PATCH",
-    body: JSON.stringify({ quantity }),
-  });
+  return apiPatch<CartItem>(`/api/cart/items/${itemId}/`, { quantity });
 }
 
 export function removeCartItem(itemId: number): Promise<void> {
-  return apiRequest(`/cart/items/${itemId}/`, { method: "DELETE" });
+  return apiDelete(`/api/cart/items/${itemId}/`);
 }
+

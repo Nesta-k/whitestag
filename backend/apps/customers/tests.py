@@ -20,7 +20,14 @@ from .google_auth import (
     verify_google_id_token,
 )
 from .google_accounts import get_or_create_google_customer
-from .models import Cart, CartItem, CustomerAccount, WishlistItem
+from .models import (
+    Cart,
+    CartItem,
+    CustomerAccount,
+    UserProfile,
+    WishlistItem,
+    get_user_role,
+)
 
 
 class CustomerAccountApiTests(TestCase):
@@ -145,6 +152,150 @@ class CustomerAccountApiTests(TestCase):
             self.client.get(reverse("api:customers:me")).status_code,
             status.HTTP_403_FORBIDDEN,
         )
+
+    def test_staff_login_issues_token_only_to_active_staff_users(self):
+        staff_user = get_user_model().objects.create_user(
+            username=uuid4().hex,
+            email="operations@example.com",
+            password="Secure-Staff-Password-92!",
+            is_staff=True,
+        )
+        staff_login = self.client.post(
+            reverse("api:customers:staff-login"),
+            {
+                "email": "OPERATIONS@example.com",
+                "password": "Secure-Staff-Password-92!",
+            },
+            format="json",
+        )
+        customer_login = self.client.post(
+            reverse("api:customers:staff-login"),
+            {"email": "missing@example.com", "password": "bad"},
+            format="json",
+        )
+
+        self.assertEqual(staff_login.status_code, status.HTTP_200_OK)
+        self.assertEqual(set(staff_login.data), {"token", "staff"})
+        self.assertEqual(staff_login.data["staff"]["email"], staff_user.email)
+        self.assertEqual(customer_login.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(get_user_model().objects.count(), 1)
+
+    def test_staff_login_accepts_superuser_username_without_email(self):
+        superuser = get_user_model().objects.create_superuser(
+            username="whitestag-admin",
+            email="",
+            password="Secure-Superuser-Password-92!",
+        )
+
+        response = self.client.post(
+            reverse("api:customers:staff-login"),
+            {
+                "email": superuser.username,
+                "password": "Secure-Superuser-Password-92!",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["staff"]["id"], superuser.pk)
+        self.assertTrue(Token.objects.filter(user=superuser).exists())
+
+    def test_staff_me_and_customer_directory_reject_non_staff(self):
+        self.register()
+        customer_user = get_user_model().objects.get(email="customer@example.com")
+        self.client.force_authenticate(user=customer_user)
+
+        me_response = self.client.get(reverse("api:customers:staff-me"))
+        customers_response = self.client.get(
+            reverse("api:customers:staff-customer-list")
+        )
+
+        self.assertEqual(me_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            customers_response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_superadmin_can_create_and_manage_staff_and_customer_accounts(self):
+        superuser = get_user_model().objects.create_superuser(
+            username="root-operations",
+            email="root@example.com",
+            password="Secure-Root-Password-92!",
+        )
+        self.client.force_authenticate(user=superuser)
+        url = reverse("api:customers:superadmin-user-list")
+
+        staff_response = self.client.post(
+            url,
+            {
+                "username": "store-manager",
+                "email": "manager@example.com",
+                "first_name": "Store",
+                "last_name": "Manager",
+                "role": "staff",
+                "password": "Secure-Manager-Password-92!",
+            },
+            format="json",
+        )
+        customer_response = self.client.post(
+            url,
+            {
+                "username": "customer-account",
+                "email": "new-customer@example.com",
+                "role": "customer",
+                "password": "Secure-Customer-Password-92!",
+            },
+            format="json",
+        )
+
+        self.assertEqual(staff_response.status_code, status.HTTP_201_CREATED)
+        staff = get_user_model().objects.get(username="store-manager")
+        self.assertTrue(staff.is_staff)
+        self.assertFalse(staff.is_superuser)
+        self.assertEqual(staff_response.data["role"], "staff")
+        self.assertEqual(customer_response.status_code, status.HTTP_201_CREATED)
+        customer_user = get_user_model().objects.get(username="customer-account")
+        customer_account = CustomerAccount.objects.get(user=customer_user)
+        self.assertTrue(Cart.objects.filter(customer=customer_account).exists())
+        self.assertEqual(customer_response.data["role"], "customer")
+
+        updated = self.client.patch(
+            reverse("api:customers:superadmin-user-detail", args=[staff.pk]),
+            {"role": "superuser"},
+            format="json",
+        )
+        self.assertEqual(updated.status_code, status.HTTP_200_OK)
+        staff.refresh_from_db()
+        self.assertTrue(staff.is_superuser)
+
+    def test_superadmin_user_api_rejects_non_superusers_and_last_admin_lockout(self):
+        staff = get_user_model().objects.create_user(
+            username="ordinary-staff",
+            email="staff@example.com",
+            password="Secure-Staff-Password-92!",
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=staff)
+        list_url = reverse("api:customers:superadmin-user-list")
+        self.assertEqual(
+            self.client.get(list_url).status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+        superuser = get_user_model().objects.create_superuser(
+            username="only-superuser",
+            email="only-root@example.com",
+            password="Secure-Root-Password-92!",
+        )
+        self.client.force_authenticate(user=superuser)
+        response = self.client.patch(
+            reverse("api:customers:superadmin-user-detail", args=[superuser.pk]),
+            {"is_active": False},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        superuser.refresh_from_db()
+        self.assertTrue(superuser.is_active)
 
     @patch("apps.customers.views.verify_google_id_token")
     def test_google_sign_in_creates_customer_cart_and_compatible_token_response(
@@ -732,3 +883,225 @@ class WishlistApiTests(TestCase):
                 response.status_code,
                 (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN),
             )
+
+
+class UserRoleAndPermissionTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+
+        # 1. Superadmin (Developer)
+        self.developer = get_user_model().objects.create_superuser(
+            username="developer-superadmin",
+            email="developer@whitestag.com",
+            password="Secure-Developer-Password-99!",
+        )
+
+        # 2. Admin (Owner)
+        self.owner = get_user_model().objects.create_user(
+            username="business-owner",
+            email="owner@whitestag.com",
+            password="Secure-Owner-Password-99!",
+            is_staff=True,
+        )
+        owner_profile, _ = UserProfile.objects.update_or_create(
+            user=self.owner,
+            defaults={"role": UserProfile.Role.ADMIN},
+        )
+        self.owner.profile = owner_profile
+
+        # 3. Staff (Operations)
+        self.staff_member = get_user_model().objects.create_user(
+            username="warehouse-staff",
+            email="staff@whitestag.com",
+            password="Secure-Staff-Password-99!",
+            is_staff=True,
+        )
+        staff_profile, _ = UserProfile.objects.update_or_create(
+            user=self.staff_member,
+            defaults={"role": UserProfile.Role.STAFF},
+        )
+        self.staff_member.profile = staff_profile
+
+        # 4. Customer (Buyer)
+        self.customer_user = get_user_model().objects.create_user(
+            username="online-shopper",
+            email="customer@whitestag.com",
+            password="Secure-Customer-Password-99!",
+        )
+        self.customer_account = CustomerAccount.objects.create(
+            user=self.customer_user,
+            email=self.customer_user.email,
+        )
+        Cart.objects.create(customer=self.customer_account)
+
+    def test_role_resolution(self):
+        self.assertEqual(get_user_role(self.developer), UserProfile.Role.SUPERADMIN)
+        self.assertEqual(get_user_role(self.owner), UserProfile.Role.ADMIN)
+        self.assertEqual(get_user_role(self.staff_member), UserProfile.Role.STAFF)
+        self.assertEqual(get_user_role(self.customer_user), UserProfile.Role.CUSTOMER)
+
+    def test_staff_login_and_me_endpoints_return_correct_roles(self):
+        login_url = reverse("api:customers:staff-login")
+        me_url = reverse("api:customers:staff-me")
+
+        # Test Developer staff login
+        dev_res = self.client.post(
+            login_url,
+            {"email": "developer@whitestag.com", "password": "Secure-Developer-Password-99!"},
+            format="json",
+        )
+        self.assertEqual(dev_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(dev_res.data["staff"]["role"], "superadmin")
+
+        # Test Owner staff login
+        owner_res = self.client.post(
+            login_url,
+            {"email": "owner@whitestag.com", "password": "Secure-Owner-Password-99!"},
+            format="json",
+        )
+        self.assertEqual(owner_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(owner_res.data["staff"]["role"], "admin")
+
+        # Test Staff login
+        staff_res = self.client.post(
+            login_url,
+            {"email": "staff@whitestag.com", "password": "Secure-Staff-Password-99!"},
+            format="json",
+        )
+        self.assertEqual(staff_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(staff_res.data["staff"]["role"], "staff")
+
+        # Test Customer cannot log in via staff-login
+        cust_res = self.client.post(
+            login_url,
+            {"email": "customer@whitestag.com", "password": "Secure-Customer-Password-99!"},
+            format="json",
+        )
+        self.assertEqual(cust_res.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        # Test staff-me endpoint as Owner
+        self.client.force_authenticate(user=self.owner)
+        me_res = self.client.get(me_url)
+        self.assertEqual(me_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(me_res.data["role"], "admin")
+
+    def test_owner_admin_can_manage_staff_and_customers_but_not_superadmin(self):
+        user_list_url = reverse("api:customers:superadmin-user-list")
+
+        self.client.force_authenticate(user=self.owner)
+
+        # Owner creates a new staff member
+        create_staff_res = self.client.post(
+            user_list_url,
+            {
+                "username": "new-cashier",
+                "email": "cashier@whitestag.com",
+                "role": "staff",
+                "password": "Secure-Cashier-Password-99!",
+            },
+            format="json",
+        )
+        self.assertEqual(create_staff_res.status_code, status.HTTP_201_CREATED)
+        created_staff = get_user_model().objects.get(username="new-cashier")
+        self.assertEqual(get_user_role(created_staff), UserProfile.Role.STAFF)
+
+        # Owner creates a new customer
+        create_cust_res = self.client.post(
+            user_list_url,
+            {
+                "username": "walk-in-customer",
+                "email": "walkin@whitestag.com",
+                "role": "customer",
+                "password": "Secure-Walkin-Password-99!",
+            },
+            format="json",
+        )
+        self.assertEqual(create_cust_res.status_code, status.HTTP_201_CREATED)
+        created_cust = get_user_model().objects.get(username="walk-in-customer")
+        self.assertEqual(get_user_role(created_cust), UserProfile.Role.CUSTOMER)
+
+        # Owner attempts to create a superadmin -> 403 Forbidden
+        create_super_res = self.client.post(
+            user_list_url,
+            {
+                "username": "rogue-superadmin",
+                "email": "rogue@whitestag.com",
+                "role": "superadmin",
+                "password": "Secure-Rogue-Password-99!",
+            },
+            format="json",
+        )
+        self.assertEqual(create_super_res.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Owner attempts to edit/deactivate the Developer superadmin -> 403 Forbidden
+        dev_detail_url = reverse(
+            "api:customers:superadmin-user-detail",
+            args=[self.developer.pk],
+        )
+        edit_dev_res = self.client.patch(
+            dev_detail_url,
+            {"is_active": False},
+            format="json",
+        )
+        self.assertEqual(edit_dev_res.status_code, status.HTTP_403_FORBIDDEN)
+        self.developer.refresh_from_db()
+        self.assertTrue(self.developer.is_active)
+
+        # Owner can deactivate a staff member
+        staff_detail_url = reverse(
+            "api:customers:superadmin-user-detail",
+            args=[created_staff.pk],
+        )
+        deactivate_staff_res = self.client.patch(
+            staff_detail_url,
+            {"is_active": False},
+            format="json",
+        )
+        self.assertEqual(deactivate_staff_res.status_code, status.HTTP_200_OK)
+        created_staff.refresh_from_db()
+        self.assertFalse(created_staff.is_active)
+
+    def test_ordinary_staff_cannot_manage_users(self):
+        user_list_url = reverse("api:customers:superadmin-user-list")
+        self.client.force_authenticate(user=self.staff_member)
+
+        # Staff gets 403 on user list/create
+        self.assertEqual(
+            self.client.get(user_list_url).status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        self.assertEqual(
+            self.client.post(
+                user_list_url,
+                {
+                    "username": "staff-attempt",
+                    "email": "attempt@whitestag.com",
+                    "password": "Password-12345!",
+                },
+                format="json",
+            ).status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_django_admin_permission_reserved_for_developer(self):
+        from django.contrib import admin
+        from django.test import RequestFactory
+
+        rf = RequestFactory()
+
+        # Superadmin (Developer) has access to Django Admin
+        req_dev = rf.get("/admin/")
+        req_dev.user = self.developer
+        self.assertTrue(admin.site.has_permission(req_dev))
+
+        # Admin (Owner) does NOT have access to Django Admin
+        req_owner = rf.get("/admin/")
+        req_owner.user = self.owner
+        self.assertFalse(admin.site.has_permission(req_owner))
+
+        # Staff does NOT have access to Django Admin
+        req_staff = rf.get("/admin/")
+        req_staff.user = self.staff_member
+        self.assertFalse(admin.site.has_permission(req_staff))
+
