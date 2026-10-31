@@ -1,10 +1,17 @@
 from rest_framework import serializers
 
+from apps.catalogue.models import ProductType
+
 from .models import (
+    AfricanDeliveryCountry,
+    DeliveryQuoteRequest,
     DeliveryPricingAuditLog,
     DeliveryPricingConfiguration,
+    DeliverySpecialRule,
     DeliverySurcharge,
     DeliveryZone,
+    GhanaRegionalDeliveryRate,
+    InternationalDeliverySettings,
     Order,
     OrderItem,
     Payment,
@@ -24,7 +31,12 @@ class CheckoutInputSerializer(serializers.Serializer):
         default="",
     )
     city = serializers.CharField(max_length=100)
-    region = serializers.CharField(max_length=100)
+    region = serializers.CharField(
+        max_length=100,
+        required=False,
+        allow_blank=True,
+        default="",
+    )
     postal_code = serializers.CharField(
         max_length=24,
         required=False,
@@ -36,8 +48,157 @@ class CheckoutInputSerializer(serializers.Serializer):
 
 class DeliveryQuoteInputSerializer(serializers.Serializer):
     city = serializers.CharField(max_length=100)
-    region = serializers.CharField(max_length=100)
+    region = serializers.CharField(
+        max_length=100,
+        required=False,
+        allow_blank=True,
+        default="",
+    )
     country = serializers.RegexField(r"^[A-Z]{2}$", default="GH")
+
+
+class DeliveryQuoteRequestInputSerializer(CheckoutInputSerializer):
+    idempotency_key = serializers.UUIDField()
+
+
+class SuperuserGhanaRegionalDeliveryRateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = GhanaRegionalDeliveryRate
+        fields = [
+            "id",
+            "region_code",
+            "region_name",
+            "version",
+            "flat_fee",
+            "rate_per_kg",
+            "is_active",
+            "allow_fallback",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "region_code", "region_name", "updated_at"]
+
+    def validate(self, attrs):
+        if self.instance:
+            rate_changed = any(
+                field in attrs and attrs[field] != getattr(self.instance, field)
+                for field in ("flat_fee", "rate_per_kg")
+            )
+            if rate_changed and attrs.get("version", self.instance.version) == self.instance.version:
+                raise serializers.ValidationError(
+                    {"version": "Change the rate version when changing regional prices."}
+                )
+        return attrs
+
+
+class SuperuserAfricanDeliveryCountrySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AfricanDeliveryCountry
+        fields = ["id", "country_code", "country_name", "is_active", "updated_at"]
+        read_only_fields = ["id", "country_code", "country_name", "updated_at"]
+
+
+class InternationalDeliverySettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InternationalDeliverySettings
+        fields = ["manual_quotes_enabled", "instructions", "updated_at"]
+        read_only_fields = ["updated_at"]
+
+
+class SuperuserDeliverySpecialRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DeliverySpecialRule
+        fields = [
+            "id",
+            "code",
+            "name",
+            "product_type",
+            "product_name_contains",
+            "minimum_product_weight_kg",
+            "surcharge_amount",
+            "requires_manual_review",
+            "is_active",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "updated_at"]
+
+    def validate_product_type(self, value):
+        if value and value not in ProductType.values:
+            raise serializers.ValidationError("Select a valid product type.")
+        return value
+
+    def validate(self, attrs):
+        product_type = attrs.get(
+            "product_type",
+            getattr(self.instance, "product_type", ""),
+        )
+        name_match = attrs.get(
+            "product_name_contains",
+            getattr(self.instance, "product_name_contains", ""),
+        )
+        weight_match = attrs.get(
+            "minimum_product_weight_kg",
+            getattr(self.instance, "minimum_product_weight_kg", None),
+        )
+        if not (product_type or name_match or weight_match is not None):
+            raise serializers.ValidationError(
+                "Specify a product type, product-name match, or minimum weight."
+            )
+        return attrs
+
+
+class DeliveryQuoteRequestAdminSerializer(serializers.ModelSerializer):
+    customer_id = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = DeliveryQuoteRequest
+        fields = [
+            "reference",
+            "status",
+            "reason",
+            "full_name",
+            "email",
+            "phone",
+            "address_line_1",
+            "address_line_2",
+            "city",
+            "region",
+            "country",
+            "postal_code",
+            "items_snapshot",
+            "quoted_fee",
+            "admin_note",
+            "pricing_snapshot",
+            "customer_id",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "reference",
+            "reason",
+            "full_name",
+            "email",
+            "phone",
+            "address_line_1",
+            "address_line_2",
+            "city",
+            "region",
+            "country",
+            "postal_code",
+            "items_snapshot",
+            "pricing_snapshot",
+            "customer_id",
+            "created_at",
+            "updated_at",
+        ]
+
+    def validate(self, attrs):
+        status_value = attrs.get("status", getattr(self.instance, "status", None))
+        quoted_fee = attrs.get("quoted_fee", getattr(self.instance, "quoted_fee", None))
+        if status_value == DeliveryQuoteRequest.Status.QUOTED and quoted_fee is None:
+            raise serializers.ValidationError(
+                {"quoted_fee": "A delivery fee is required before marking a request quoted."}
+            )
+        return attrs
 
 
 class DeliveryZoneSerializer(serializers.ModelSerializer):
@@ -207,6 +368,8 @@ class DeliverySurchargeQuoteSerializer(serializers.Serializer):
 
 class DeliveryQuoteSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=["estimated", "manual_review"])
+    pricing_mode = serializers.CharField(required=False, default="distance_formula")
+    quote_request_available = serializers.BooleanField(required=False)
     requires_manual_review = serializers.BooleanField()
     review_reason = serializers.CharField(allow_blank=True)
     currency = serializers.CharField()
@@ -241,6 +404,11 @@ class DeliveryQuoteSerializer(serializers.Serializer):
     )
     order_total = serializers.DecimalField(
         max_digits=12, decimal_places=2, allow_null=True
+    )
+    special_rules = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        default=list,
     )
 
 

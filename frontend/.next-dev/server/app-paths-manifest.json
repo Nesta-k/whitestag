@@ -1,0 +1,7 @@
+{
+  "/(storefront)/products/page": "app/(storefront)/products/page.js",
+  "/(storefront)/quotes/page": "app/(storefront)/quotes/page.js",
+  "/(storefront)/account/page": "app/(storefront)/account/page.js",
+  "/(storefront)/wishlist/quotes/page": "app/(storefront)/wishlist/quotes/page.js",
+  "/(storefront)/page": "app/(storefront)/page.js"
+}

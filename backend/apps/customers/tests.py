@@ -10,7 +10,7 @@ from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
-from apps.catalogue.models import Category, Product
+from apps.catalogue.models import Category, Product, ProductImage
 from apps.inventory.models import InventoryRecord, StockMovement
 from apps.inventory.services import receive_stock
 
@@ -63,9 +63,11 @@ class CustomerAccountApiTests(TestCase):
         self.assertEqual(set(response.data), {"token", "customer"})
         self.assertEqual(
             set(response.data["customer"]),
-            {"id", "email", "created_at"},
+            {"id", "email", "first_name", "last_name", "created_at"},
         )
         self.assertEqual(response.data["customer"]["email"], "customer@example.com")
+        self.assertEqual(response.data["customer"]["first_name"], "")
+        self.assertEqual(response.data["customer"]["last_name"], "")
         user = get_user_model().objects.get(email="customer@example.com")
         self.assertNotEqual(user.password, "Violet-River-82!")
         self.assertTrue(user.check_password("Violet-River-82!"))
@@ -317,9 +319,11 @@ class CustomerAccountApiTests(TestCase):
         self.assertEqual(set(response.data), {"token", "customer"})
         self.assertEqual(
             set(response.data["customer"]),
-            {"id", "email", "created_at"},
+            {"id", "email", "first_name", "last_name", "created_at"},
         )
         self.assertEqual(response.data["customer"]["email"], "new.customer@example.com")
+        self.assertEqual(response.data["customer"]["first_name"], "New")
+        self.assertEqual(response.data["customer"]["last_name"], "Customer")
         account = CustomerAccount.objects.get(google_sub="google-sub-new-customer")
         self.assertEqual(account.user.first_name, "New")
         self.assertEqual(account.user.last_name, "Customer")
@@ -585,11 +589,29 @@ class CartApiTests(TestCase):
     def test_cart_view_update_and_remove_are_persistent(self):
         add_response = self.add_product(quantity=2)
         item_id = add_response.data["id"]
+        ProductImage.objects.create(
+            product=self.product,
+            image_url="https://images.example.test/other-view.jpg",
+            alt_text="Other view",
+            display_order=0,
+            is_primary=False,
+        )
+        ProductImage.objects.create(
+            product=self.product,
+            image_url="https://images.example.test/brake-pad.jpg",
+            alt_text="Brake pad",
+            display_order=1,
+            is_primary=True,
+        )
 
         cart_response = self.client.get(reverse("api:customers:cart"))
         self.assertEqual(cart_response.status_code, status.HTTP_200_OK)
         self.assertEqual(cart_response.data["item_count"], 2)
         self.assertEqual(len(cart_response.data["items"]), 1)
+        self.assertEqual(
+            cart_response.data["items"][0]["product"]["image_url"],
+            "https://images.example.test/brake-pad.jpg",
+        )
 
         update_response = self.client.patch(
             reverse("api:customers:cart-item-detail", args=[item_id]),
@@ -612,16 +634,24 @@ class CartApiTests(TestCase):
                 self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(CartItem.objects.count(), 0)
 
-    def test_cart_rejects_vehicle_quote_only_unpublished_and_unpriced_products(self):
+    def test_cart_accepts_direct_purchase_vehicles(self):
+        vehicle = self.create_product(
+            sku="CART-CAR",
+            name="Vehicle",
+            slug="cart-vehicle",
+            product_type=Product.ProductType.CAR,
+            sales_method=Product.SalesMethod.DIRECT_PURCHASE,
+            publication_status=Product.PublicationStatus.PUBLISHED,
+        )
+        receive_stock(vehicle.pk, 10, idempotency_key=uuid4())
+
+        response = self.add_product(product=vehicle)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["product"]["id"], vehicle.pk)
+
+    def test_cart_rejects_quote_only_unpublished_and_unpriced_products(self):
         products = [
-            self.create_product(
-                sku="CART-CAR",
-                name="Vehicle",
-                slug="cart-vehicle",
-                product_type=Product.ProductType.CAR,
-                sales_method=Product.SalesMethod.DIRECT_PURCHASE,
-                publication_status=Product.PublicationStatus.PUBLISHED,
-            ),
             self.create_product(
                 sku="CART-QUOTE",
                 name="Quote part",
@@ -1104,4 +1134,3 @@ class UserRoleAndPermissionTests(TestCase):
         req_staff = rf.get("/admin/")
         req_staff.user = self.staff_member
         self.assertFalse(admin.site.has_permission(req_staff))
-

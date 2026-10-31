@@ -4,6 +4,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from django.db.models import Count, F, Prefetch, Q, Sum
+from django.db import transaction
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status
@@ -31,10 +32,15 @@ from apps.inventory.models import InventoryRecord
 from apps.inventory.serializers import InventoryRecordSerializer
 
 from .models import (
+    AfricanDeliveryCountry,
+    DeliveryQuoteRequest,
     DeliveryPricingAuditLog,
     DeliveryPricingConfiguration,
+    DeliverySpecialRule,
     DeliverySurcharge,
     DeliveryZone,
+    GhanaRegionalDeliveryRate,
+    InternationalDeliverySettings,
     Order,
     OrderItem,
     Payment,
@@ -66,9 +72,15 @@ from .payment_services import (
 from .serializers import (
     CheckoutInputSerializer,
     DeliveryQuoteInputSerializer,
+    DeliveryQuoteRequestAdminSerializer,
+    DeliveryQuoteRequestInputSerializer,
     DeliveryQuoteSerializer,
     DeliveryPricingAuditLogSerializer,
+    InternationalDeliverySettingsSerializer,
+    SuperuserAfricanDeliveryCountrySerializer,
+    SuperuserDeliverySpecialRuleSerializer,
     SuperuserDeliveryPricingConfigurationSerializer,
+    SuperuserGhanaRegionalDeliveryRateSerializer,
     SuperuserDeliverySurchargeSerializer,
     SuperuserDeliveryZoneSerializer,
     DeliveryZoneSerializer,
@@ -199,6 +211,174 @@ class DeliveryQuoteView(APIView):
             [(item.product, item.quantity) for item in items],
         )
         return Response(DeliveryQuoteSerializer(quote).data)
+
+
+class DeliveryOptionsView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response(
+            {
+                "regions": list(
+                    GhanaRegionalDeliveryRate.objects
+                    .order_by("region_name")
+                    .values(
+                        "region_code",
+                        "region_name",
+                        "is_active",
+                        "allow_fallback",
+                    )
+                ),
+                "countries": list(
+                    AfricanDeliveryCountry.objects.filter(is_active=True)
+                    .order_by("country_name")
+                    .values("country_code", "country_name")
+                ),
+                "international": InternationalDeliverySettingsSerializer(
+                    InternationalDeliverySettings.load()
+                ).data,
+            }
+        )
+
+
+class DeliveryQuoteRequestView(APIView):
+    permission_classes = [IsAuthenticated, HasCustomerAccount]
+
+    @transaction.atomic
+    def post(self, request):
+        serializer = DeliveryQuoteRequestInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        customer_id = request.user.customer_account.pk
+        existing = DeliveryQuoteRequest.objects.filter(
+            customer_id=customer_id,
+            idempotency_key=data["idempotency_key"],
+        ).first()
+        if existing:
+            if any(
+                getattr(existing, field) != value
+                for field, value in data.items()
+                if field != "idempotency_key"
+            ):
+                raise OrderConflict(
+                    detail="This idempotency key was already used with different details."
+                )
+            return Response(
+                {"reference": str(existing.reference), "status": existing.status},
+                status=status.HTTP_200_OK,
+            )
+
+        country = data.get("country", "GH").upper()
+        if country != "GH":
+            if not AfricanDeliveryCountry.objects.filter(
+                country_code=country,
+                is_active=True,
+            ).exists():
+                raise ValidationError(
+                    {"country": "Select an enabled African delivery country."}
+                )
+            settings_obj = InternationalDeliverySettings.objects.filter(pk=1).first()
+            if settings_obj is None or not settings_obj.manual_quotes_enabled:
+                raise ValidationError(
+                    {"country": "International delivery quotations are unavailable."}
+                )
+
+        cart = (
+            Cart.objects.select_for_update()
+            .filter(customer_id=customer_id)
+            .prefetch_related("items__product")
+            .first()
+        )
+        if cart is None or not cart.items.exists():
+            raise ValidationError({"cart": "Your cart is empty."})
+        items = list(cart.items.all())
+        quote = calculate_delivery_pricing(
+            {
+                "city": data["city"],
+                "region": data["region"],
+                "country": country,
+            },
+            [(item.product, item.quantity) for item in items],
+            lock_rows=True,
+        )
+        if not quote["requires_manual_review"]:
+            raise ValidationError(
+                {
+                    "delivery_pricing": (
+                        "This destination can be checked out with automatic pricing."
+                    )
+                }
+            )
+        if country != "GH" and quote.get("quote_request_available") is not True:
+            raise ValidationError({"country": quote["review_reason"]})
+
+        item_snapshot = [
+            {
+                "product_id": item.product_id,
+                "name": item.product.name,
+                "sku": item.product.sku,
+                "quantity": item.quantity,
+                "unit_price": str(item.product.price) if item.product.price else None,
+                "currency": item.product.currency,
+                "weight_kg": (
+                    str(item.product.weight_kg)
+                    if item.product.weight_kg is not None
+                    else None
+                ),
+            }
+            for item in items
+        ]
+        quote_request, created = DeliveryQuoteRequest.objects.get_or_create(
+            customer_id=customer_id,
+            idempotency_key=data["idempotency_key"],
+            defaults={
+                "reason": (
+                    quote["review_reason"]
+                    or "Manual delivery quotation requested."
+                )[:255],
+                "full_name": data["full_name"],
+                "email": data["email"],
+                "phone": data["phone"],
+                "address_line_1": data["address_line_1"],
+                "address_line_2": data["address_line_2"],
+                "city": data["city"],
+                "region": data["region"],
+                "country": country,
+                "postal_code": data["postal_code"],
+                "items_snapshot": item_snapshot,
+                "pricing_snapshot": quote,
+            },
+        )
+        if not created and (
+            any(
+                getattr(quote_request, field) != value
+                for field, value in data.items()
+                if field != "idempotency_key"
+            )
+            or quote_request.items_snapshot != item_snapshot
+        ):
+            raise OrderConflict(
+                detail="This idempotency key was already used with different details."
+            )
+        if created:
+            DeliveryPricingAuditLog.objects.create(
+                configuration_type=DeliveryPricingAuditLog.ConfigurationType.QUOTE_REQUEST,
+                object_id=str(quote_request.reference),
+                object_label=str(quote_request.reference),
+                action=DeliveryPricingAuditLog.Action.CREATED,
+                actor=request.user,
+                before_state=None,
+                after_state=DeliveryQuoteRequestAdminSerializer(quote_request).data,
+            )
+        return Response(
+            {
+                "reference": str(quote_request.reference),
+                "status": quote_request.status,
+            },
+            status=(
+                status.HTTP_201_CREATED if created else status.HTTP_200_OK
+            ),
+        )
 
 
 class OrderPaymentInitializationView(APIView):
@@ -692,6 +872,122 @@ class SuperuserDeliverySurchargeDetailView(
     serializer_class = SuperuserDeliverySurchargeSerializer
     queryset = DeliverySurcharge.objects.select_related("zone").all()
     audit_type = DeliveryPricingAuditLog.ConfigurationType.SURCHARGE
+
+
+class SuperuserRegionalRateListView(ListAPIView):
+    permission_classes = [IsAdminOrSuperadmin]
+    serializer_class = SuperuserGhanaRegionalDeliveryRateSerializer
+    pagination_class = CataloguePagination
+    queryset = GhanaRegionalDeliveryRate.objects.order_by("region_name", "pk")
+
+
+class SuperuserRegionalRateDetailView(
+    SuperuserPricingAuditMixin,
+    RetrieveUpdateAPIView,
+):
+    permission_classes = [IsAdminOrSuperadmin]
+    serializer_class = SuperuserGhanaRegionalDeliveryRateSerializer
+    queryset = GhanaRegionalDeliveryRate.objects.all()
+    audit_type = DeliveryPricingAuditLog.ConfigurationType.REGION
+
+
+class SuperuserAfricanCountryListView(ListAPIView):
+    permission_classes = [IsAdminOrSuperadmin]
+    serializer_class = SuperuserAfricanDeliveryCountrySerializer
+    pagination_class = CataloguePagination
+    queryset = AfricanDeliveryCountry.objects.order_by("country_name", "pk")
+
+
+class SuperuserAfricanCountryDetailView(
+    SuperuserPricingAuditMixin,
+    RetrieveUpdateAPIView,
+):
+    permission_classes = [IsAdminOrSuperadmin]
+    serializer_class = SuperuserAfricanDeliveryCountrySerializer
+    queryset = AfricanDeliveryCountry.objects.all()
+    audit_type = DeliveryPricingAuditLog.ConfigurationType.COUNTRY
+
+
+class SuperuserDeliverySpecialRuleListView(
+    SuperuserPricingAuditMixin,
+    ListCreateAPIView,
+):
+    permission_classes = [IsAdminOrSuperadmin]
+    serializer_class = SuperuserDeliverySpecialRuleSerializer
+    pagination_class = CataloguePagination
+    queryset = DeliverySpecialRule.objects.order_by("name", "pk")
+    audit_type = DeliveryPricingAuditLog.ConfigurationType.RULE
+
+
+class SuperuserDeliverySpecialRuleDetailView(
+    SuperuserPricingAuditMixin,
+    RetrieveUpdateAPIView,
+):
+    permission_classes = [IsAdminOrSuperadmin]
+    serializer_class = SuperuserDeliverySpecialRuleSerializer
+    queryset = DeliverySpecialRule.objects.all()
+    audit_type = DeliveryPricingAuditLog.ConfigurationType.RULE
+
+
+class SuperuserInternationalDeliverySettingsView(APIView):
+    permission_classes = [IsAdminOrSuperadmin]
+
+    def get(self, request):
+        return Response(InternationalDeliverySettingsSerializer(
+            InternationalDeliverySettings.load()
+        ).data)
+
+    def patch(self, request):
+        instance = InternationalDeliverySettings.load()
+        serializer = InternationalDeliverySettingsSerializer(
+            instance,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        before_state = InternationalDeliverySettingsSerializer(instance).data
+        instance = serializer.save()
+        after_state = InternationalDeliverySettingsSerializer(instance).data
+        if before_state != after_state:
+            DeliveryPricingAuditLog.objects.create(
+                configuration_type=DeliveryPricingAuditLog.ConfigurationType.INTL_SETTINGS,
+                object_id="1",
+                object_label="International delivery settings",
+                action=DeliveryPricingAuditLog.Action.UPDATED,
+                actor=request.user,
+                before_state=before_state,
+                after_state=after_state,
+            )
+        return Response(after_state)
+
+
+class SuperuserDeliveryQuoteRequestListView(ListAPIView):
+    permission_classes = [IsAdminOrSuperadmin]
+    serializer_class = DeliveryQuoteRequestAdminSerializer
+    pagination_class = CataloguePagination
+    queryset = DeliveryQuoteRequest.objects.select_related("customer").order_by(
+        "-created_at",
+        "-pk",
+    )
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        status_filter = self.request.query_params.get("status")
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        return queryset
+
+
+class SuperuserDeliveryQuoteRequestDetailView(
+    SuperuserPricingAuditMixin,
+    RetrieveUpdateAPIView,
+):
+    permission_classes = [IsAdminOrSuperadmin]
+    serializer_class = DeliveryQuoteRequestAdminSerializer
+    queryset = DeliveryQuoteRequest.objects.select_related("customer").all()
+    audit_type = DeliveryPricingAuditLog.ConfigurationType.QUOTE_REQUEST
+    lookup_field = "reference"
+    lookup_url_kwarg = "pk"
 
 
 class SuperuserDeliveryPricingAuditListView(ListAPIView):

@@ -3,7 +3,7 @@ from uuid import uuid4
 from django.contrib.auth import authenticate, get_user_model, logout
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import Prefetch, Q
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.authentication import BaseAuthentication
@@ -26,7 +26,7 @@ from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
-from apps.catalogue.models import Product
+from apps.catalogue.models import Product, ProductImage
 from apps.catalogue.pagination import CataloguePagination
 
 from .models import Cart, CustomerAccount, UserProfile, WishlistItem, get_user_role
@@ -404,7 +404,17 @@ class CartView(APIView):
     def get(self, request):
         cart = get_object_or_404(
             Cart.objects.filter(customer=request.user.customer_account)
-            .prefetch_related("items__product__inventory"),
+            .prefetch_related(
+                "items__product__inventory",
+                Prefetch(
+                    "items__product__images",
+                    queryset=ProductImage.objects.order_by(
+                        "-is_primary",
+                        "display_order",
+                        "pk",
+                    ),
+                ),
+            ),
         )
         return Response(CartSerializer(cart).data)
 

@@ -8,7 +8,8 @@ import {
   AdminPagination,
   type AdminColumn,
 } from "@/components/admin/table";
-import { useAdminList } from "@/components/admin/hooks";
+import { useAdminList, useAdminResource } from "@/components/admin/hooks";
+import { listAdminProducts } from "@/lib/api/admin/catalogue";
 import { describeAdminError } from "@/lib/api/admin/client";
 import {
   adjustStock,
@@ -16,7 +17,7 @@ import {
   listStockMovements,
   receiveStock,
 } from "@/lib/api/admin/inventory";
-import type { InventoryRecord, StockMovement } from "@/types/admin";
+import type { AdminProduct, InventoryRecord, StockMovement } from "@/types/admin";
 
 const HISTORY_PAGE_SIZE = 20;
 
@@ -36,6 +37,24 @@ function humanizeMovement(value: string): string {
 export default function InventoryPage() {
   const [search, setSearch] = useState("");
   const list = useAdminList((page) => listInventory({ search, page }), search);
+  const [stockProductSearch, setStockProductSearch] = useState("");
+  const stockProducts = useAdminResource(
+    () =>
+      listAdminProducts({
+        search: stockProductSearch,
+        publication_status: "published",
+        sales_method: "direct_purchase",
+        page_size: 100,
+      }),
+    [stockProductSearch],
+  );
+  const [newStockModalOpen, setNewStockModalOpen] = useState(false);
+  const [newStockProductId, setNewStockProductId] = useState("");
+  const [newStockQuantity, setNewStockQuantity] = useState("");
+  const [newStockReason, setNewStockReason] = useState("");
+  const [newStockReference, setNewStockReference] = useState("");
+  const [newStockBusy, setNewStockBusy] = useState(false);
+  const [newStockError, setNewStockError] = useState("");
 
   const [stockModal, setStockModal] = useState<{
     record: InventoryRecord;
@@ -54,6 +73,44 @@ export default function InventoryPage() {
   const [historyCount, setHistoryCount] = useState(0);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+
+  function openNewStockModal() {
+    setStockProductSearch("");
+    setNewStockProductId("");
+    setNewStockQuantity("");
+    setNewStockReason("");
+    setNewStockReference("");
+    setNewStockError("");
+    setNewStockModalOpen(true);
+  }
+
+  async function handleNewStockSubmit() {
+    setNewStockError("");
+    const parsed = Number(newStockQuantity);
+    if (!newStockProductId) {
+      setNewStockError("Select a product.");
+      return;
+    }
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      setNewStockError("Enter a whole quantity greater than zero.");
+      return;
+    }
+
+    setNewStockBusy(true);
+    try {
+      await receiveStock(Number(newStockProductId), {
+        quantity: parsed,
+        reason: newStockReason,
+        reference: newStockReference,
+      });
+      setNewStockModalOpen(false);
+      list.reload();
+    } catch (error) {
+      setNewStockError(describeAdminError(error));
+    } finally {
+      setNewStockBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!historyRecord) return;
@@ -241,6 +298,15 @@ export default function InventoryPage() {
       <AdminPageHeader
         title="Inventory"
         description="Stock on hand, reservations and reorder thresholds."
+        actions={
+          <button
+            type="button"
+            className="ws-dash-btn is-primary"
+            onClick={openNewStockModal}
+          >
+            Receive stock for product
+          </button>
+        }
       />
 
       <div className="ws-dash-panel">
@@ -278,6 +344,107 @@ export default function InventoryPage() {
           />
         </div>
       </div>
+
+      <AdminModal
+        open={newStockModalOpen}
+        title="Receive stock for product"
+        onClose={() => setNewStockModalOpen(false)}
+        footer={
+          <>
+            <button
+              type="button"
+              className="ws-dash-btn is-ghost"
+              onClick={() => setNewStockModalOpen(false)}
+              disabled={newStockBusy}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="ws-dash-btn is-primary"
+              onClick={handleNewStockSubmit}
+              disabled={newStockBusy}
+            >
+              {newStockBusy ? "Saving…" : "Receive stock"}
+            </button>
+          </>
+        }
+      >
+        <p className="ws-dash-note">
+          Select a published direct-purchase product. If it has no inventory
+          record yet, one will be created when you receive stock.
+        </p>
+        <Field label="Search products">
+          <input
+            className="ws-dash-input"
+            type="search"
+            value={stockProductSearch}
+            onChange={(event) => {
+              setStockProductSearch(event.target.value);
+              setNewStockProductId("");
+            }}
+          />
+        </Field>
+        <Field label="Product">
+          <select
+            className="ws-dash-select"
+            value={newStockProductId}
+            onChange={(event) => setNewStockProductId(event.target.value)}
+            disabled={stockProducts.loading}
+          >
+            <option value="">
+              {stockProducts.loading ? "Loading products…" : "Select a product…"}
+            </option>
+            {(stockProducts.data?.results ?? []).map((product: AdminProduct) => (
+              <option key={product.id} value={String(product.id)}>
+                {product.name} ({product.sku})
+              </option>
+            ))}
+          </select>
+        </Field>
+        {!stockProducts.loading &&
+        !stockProducts.error &&
+        (stockProducts.data?.results.length ?? 0) === 0 ? (
+          <p className="ws-dash-note">
+            No published direct-purchase products match this search.
+          </p>
+        ) : null}
+        {stockProducts.error ? (
+          <p className="ws-dash-field-error">{stockProducts.error}</p>
+        ) : null}
+        <Field label="Quantity">
+          <input
+            className="ws-dash-input"
+            type="number"
+            min="1"
+            step="1"
+            value={newStockQuantity}
+            onChange={(event) => setNewStockQuantity(event.target.value)}
+            required
+          />
+        </Field>
+        <Field label="Reason">
+          <input
+            className="ws-dash-input"
+            type="text"
+            value={newStockReason}
+            onChange={(event) => setNewStockReason(event.target.value)}
+          />
+        </Field>
+        <Field label="Reference" hint="Optional — e.g. supplier invoice.">
+          <input
+            className="ws-dash-input"
+            type="text"
+            value={newStockReference}
+            onChange={(event) => setNewStockReference(event.target.value)}
+          />
+        </Field>
+        {newStockError ? (
+          <p className="ws-dash-field-error" role="alert">
+            {newStockError}
+          </p>
+        ) : null}
+      </AdminModal>
 
       <AdminModal
         open={stockModal !== null}

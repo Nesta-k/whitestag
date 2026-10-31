@@ -145,10 +145,10 @@ workers.
 The authenticated customer's persistent cart is available at `GET /api/cart/`.
 Use `POST /api/cart/items/` to add a product and quantity,
 `PATCH /api/cart/items/{item_id}/` to set a quantity, and
-`DELETE /api/cart/items/{item_id}/` to remove it. Only published spare parts
-marked for direct purchase and having a current price can be added. Add/update
-also require an inventory record with enough currently available stock; this
-is a momentary check, not a reservation. The cart does not reserve stock.
+`DELETE /api/cart/items/{item_id}/` to remove it. Any published product marked
+for direct purchase with a positive GHS price can be added, including vehicles.
+Add/update also require an inventory record with enough currently available
+stock; this is a momentary check, not a reservation. The cart does not reserve stock.
 Existing lines remain visible if their product becomes unavailable; such lines
 are marked unavailable, and product details are omitted if the listing is no
 longer published/eligible. The cart always reports the current catalogue price,
@@ -169,18 +169,19 @@ a conflict. Submitted prices and totals are ignored. The server snapshots
 current catalogue prices, SKU and product names, computes totals in the
 products' currency (GHS by default), and requires a single currency per order.
 
-Checkout accepts only published, priced spare parts set to direct purchase.
-It locks the customer's cart, then products and inventory in ascending product
-ID order, reserves stock through the inventory service, and clears the cart
-only after order and reservations succeed in one database transaction. An
-empty/ineligible cart is rejected; insufficient or unavailable stock returns
-a conflict. Cancellation is allowed only for pending, unpaid orders; stock is
+Checkout accepts any published, positively priced product set to direct
+purchase, provided the product and delivery currencies match. It locks the
+customer's cart, then products and inventory in ascending product ID order,
+reserves stock through the inventory service, and clears the cart only after
+order and reservations succeed in one database transaction. An empty/ineligible
+cart is rejected; insufficient or unavailable stock returns a conflict.
+Cancellation is allowed only for pending, unpaid orders; stock is
 released through the inventory service in the same transaction, with a
 deterministic idempotency key per order line. Repeated cancellation is safe.
 New orders start pending and unpaid. Payment and fulfilment transitions are
 not accepted through the API; order totals and snapshots are read-only to API
-users and protected from editing in Django Admin. Vehicles and quote-only
-products are not orderable through this API.
+users and protected from editing in Django Admin. Quote-only products cannot
+be ordered through this API.
 
 Staff can view all orders at `GET /api/orders/staff/` and mark paid processing
 orders complete with `POST /api/orders/staff/{public_reference}/complete/`.

@@ -68,6 +68,36 @@ class VehicleEnquiryApiTests(TestCase):
         enquiry = VehicleEnquiry.objects.first()
         self.assertEqual(enquiry.customer, self.customer_account)
 
+    def test_public_can_submit_enquiry_for_published_spare_part(self):
+        parts_category = Category.objects.create(
+            name="Spare parts",
+            slug="spare-parts",
+        )
+        part = Product.objects.create(
+            sku="PART-001",
+            name="Brake pad",
+            slug="brake-pad",
+            category=parts_category,
+            product_type=Product.ProductType.SPARE_PART,
+            sales_method=Product.SalesMethod.QUOTATION,
+            publication_status=Product.PublicationStatus.PUBLISHED,
+        )
+
+        response = self.client.post(
+            reverse("api:vehicle-enquiry-list"),
+            {
+                "product": part.pk,
+                "name": "Guest User",
+                "email": "guest@example.com",
+                "phone_number": "1234567890",
+                "message": "Please send me more information.",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(VehicleEnquiry.objects.filter(product=part).exists())
+
     def test_public_cannot_list_enquiries(self):
         url = reverse("api:vehicle-enquiry-list")
         response = self.client.get(url)

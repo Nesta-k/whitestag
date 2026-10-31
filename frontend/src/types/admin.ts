@@ -223,6 +223,83 @@ export interface StaffDeliveryPricing {
   surcharges: StaffDeliverySurcharge[];
 }
 
+export interface GhanaRegionalRate {
+  id: number;
+  region_code: string;
+  region_name: string;
+  version: string;
+  flat_fee: string;
+  rate_per_kg: string;
+  is_active: boolean;
+  allow_fallback: boolean;
+  updated_at: string;
+}
+
+export interface AfricanDeliveryCountry {
+  id: number;
+  country_code: string;
+  country_name: string;
+  is_active: boolean;
+  updated_at: string;
+}
+
+export interface DeliverySpecialRule {
+  id: number;
+  code: string;
+  name: string;
+  product_type: string;
+  product_name_contains: string;
+  minimum_product_weight_kg: string | null;
+  surcharge_amount: string;
+  requires_manual_review: boolean;
+  is_active: boolean;
+  updated_at: string;
+}
+
+export type DeliveryQuoteRequestStatus =
+  | "pending"
+  | "in_progress"
+  | "quoted"
+  | "accepted"
+  | "declined"
+  | "cancelled";
+
+export interface DeliveryQuoteRequest {
+  reference: string;
+  status: DeliveryQuoteRequestStatus;
+  reason: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  address_line_1: string;
+  address_line_2: string;
+  city: string;
+  region: string;
+  country: string;
+  postal_code: string;
+  items_snapshot: {
+    product_id: number;
+    name: string;
+    sku: string;
+    quantity: number;
+    unit_price: string | null;
+    currency: string;
+    weight_kg: string | null;
+  }[];
+  quoted_fee: string | null;
+  admin_note: string;
+  pricing_snapshot: Record<string, unknown>;
+  customer_id: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InternationalDeliverySettings {
+  manual_quotes_enabled: boolean;
+  instructions: string;
+  updated_at: string;
+}
+
 export interface DeliveryPricingAuditEntry {
   configuration_type: string;
   object_id: string;
@@ -234,7 +311,7 @@ export interface DeliveryPricingAuditEntry {
   created_at: string;
 }
 
-// ─── Vehicle enquiries ────────────────────────────────────────────────────────
+// ─── Product enquiries ────────────────────────────────────────────────────────
 
 export type VehicleEnquiryStatus =
   | "pending"

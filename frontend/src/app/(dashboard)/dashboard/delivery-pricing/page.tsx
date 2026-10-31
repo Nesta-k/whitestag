@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { AdminPageHeader, Field, StatusBadge } from "@/components/admin/ui";
 import { AdminEmpty, AdminError, AdminLoading } from "@/components/admin/states";
 import { AdminModal } from "@/components/admin/modal";
@@ -15,20 +15,32 @@ import { can } from "@/lib/admin/capabilities";
 import { useStaffAuth } from "@/store/staff-auth-context";
 import {
   createDeliverySurcharge,
+  createDeliverySpecialRule,
   createDeliveryZone,
-  createPricingConfiguration,
   getStaffDeliveryPricing,
+  getInternationalDeliverySettings,
+  listAfricanDeliveryCountries,
   listDeliveryPricingAudit,
+  listDeliveryQuoteRequests,
+  listDeliverySpecialRules,
+  listGhanaRegionalRates,
   listDeliverySurcharges,
   listDeliveryZones,
-  listPricingConfigurations,
   updateDeliverySurcharge,
+  updateAfricanDeliveryCountry,
+  updateDeliveryQuoteRequest,
+  updateDeliverySpecialRule,
   updateDeliveryZone,
-  updatePricingConfiguration,
+  updateGhanaRegionalRate,
+  updateInternationalDeliverySettings,
 } from "@/lib/api/admin/orders";
 import type {
   DeliveryPricingAuditEntry,
-  DeliveryPricingConfiguration,
+  DeliveryQuoteRequest,
+  DeliverySpecialRule,
+  GhanaRegionalRate,
+  AfricanDeliveryCountry,
+  InternationalDeliverySettings,
   StaffDeliverySurcharge,
   StaffDeliveryZone,
 } from "@/types/admin";
@@ -55,19 +67,171 @@ function emptyPage<T>(): Promise<PaginatedResponse<T>> {
   return Promise.resolve({ count: 0, next: null, previous: null, results: [] });
 }
 
+function RegionalRateRow({
+  row,
+  onSave,
+}: {
+  row: GhanaRegionalRate;
+  onSave: (id: number, payload: Partial<GhanaRegionalRate>) => Promise<void>;
+}) {
+  const [version, setVersion] = useState(row.version);
+  const [fee, setFee] = useState(row.flat_fee);
+  const [ratePerKg, setRatePerKg] = useState(row.rate_per_kg);
+  const [active, setActive] = useState(row.is_active);
+  const [fallback, setFallback] = useState(row.allow_fallback);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save() {
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(row.id, {
+        version,
+        flat_fee: fee,
+        rate_per_kg: ratePerKg,
+        is_active: active,
+        allow_fallback: fallback,
+      });
+    } catch (saveError) {
+      setError(describeAdminError(saveError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <tr>
+      <td>{row.region_name}</td>
+      <td><input aria-label={`${row.region_name} rate version`} value={version} onChange={(event) => setVersion(event.target.value)} /></td>
+      <td><input aria-label={`${row.region_name} flat fee`} type="number" min="0" step="0.01" value={fee} onChange={(event) => setFee(event.target.value)} /></td>
+      <td><input aria-label={`${row.region_name} per kg rate`} type="number" min="0" step="0.0001" value={ratePerKg} onChange={(event) => setRatePerKg(event.target.value)} /></td>
+      <td><input aria-label={`${row.region_name} active`} type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} /></td>
+      <td><input aria-label={`${row.region_name} allow fallback`} type="checkbox" checked={fallback} onChange={(event) => setFallback(event.target.checked)} /></td>
+      <td>
+        <button type="button" className="ws-dash-btn is-small" disabled={saving} onClick={() => void save()}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+        {error && <span className="ws-dash-field-error">{error}</span>}
+      </td>
+    </tr>
+  );
+}
+
+function QuoteRequestRow({
+  row,
+  onSave,
+}: {
+  row: DeliveryQuoteRequest;
+  onSave: (
+    reference: string,
+    payload: Pick<DeliveryQuoteRequest, "status" | "quoted_fee" | "admin_note">,
+  ) => Promise<void>;
+}) {
+  const [statusValue, setStatusValue] = useState(row.status);
+  const [fee, setFee] = useState(row.quoted_fee ?? "");
+  const [note, setNote] = useState(row.admin_note);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  async function save() {
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(row.reference, {
+        status: statusValue,
+        quoted_fee: fee || null,
+        admin_note: note,
+      });
+    } catch (saveError) {
+      setError(describeAdminError(saveError));
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <tr>
+      <td>{row.reference.slice(0, 8)}</td>
+      <td>{row.full_name}<br />{row.email}</td>
+      <td>{row.city}, {row.region || row.country}<br />{row.address_line_1}</td>
+      <td>{row.items_snapshot.map((item) => `${item.name} × ${item.quantity}`).join(", ")}</td>
+      <td>
+        <select aria-label="Quotation status" value={statusValue} onChange={(event) => setStatusValue(event.target.value as DeliveryQuoteRequest["status"])}>
+          {["pending", "in_progress", "quoted", "accepted", "declined", "cancelled"].map((value) => <option key={value} value={value}>{humanize(value)}</option>)}
+        </select>
+        <input aria-label="Quoted delivery fee" type="number" min="0" step="0.01" placeholder="GHS fee" value={fee} onChange={(event) => setFee(event.target.value)} />
+        <input aria-label="Admin note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Customer-facing note" />
+      </td>
+      <td><button type="button" className="ws-dash-btn is-small" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button>{error && <span className="ws-dash-field-error">{error}</span>}</td>
+    </tr>
+  );
+}
+
+function SpecialRuleRow({
+  row,
+  onSave,
+}: {
+  row: DeliverySpecialRule;
+  onSave: (id: number, payload: Partial<DeliverySpecialRule>) => Promise<void>;
+}) {
+  const [name, setName] = useState(row.name);
+  const [productType, setProductType] = useState(row.product_type);
+  const [nameMatch, setNameMatch] = useState(row.product_name_contains);
+  const [weight, setWeight] = useState(row.minimum_product_weight_kg ?? "");
+  const [surcharge, setSurcharge] = useState(row.surcharge_amount);
+  const [manual, setManual] = useState(row.requires_manual_review);
+  const [active, setActive] = useState(row.is_active);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save() {
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(row.id, {
+        name,
+        product_type: productType,
+        product_name_contains: nameMatch,
+        minimum_product_weight_kg: weight || null,
+        surcharge_amount: surcharge,
+        requires_manual_review: manual,
+        is_active: active,
+      });
+    } catch (saveError) {
+      setError(describeAdminError(saveError));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="ws-dash-form-grid">
+      <label>{row.code}
+        <input aria-label={`${row.name} rule name`} value={name} onChange={(event) => setName(event.target.value)} />
+      </label>
+      <label>Product type
+        <select aria-label={`${row.name} product type`} value={productType} onChange={(event) => setProductType(event.target.value)}>
+          <option value="">Any type</option>
+          {["spare_part", "car", "electric_vehicle", "tricycle", "motorcycle_bike", "other"].map((value) => <option key={value} value={value}>{humanize(value)}</option>)}
+        </select>
+        <input aria-label={`${row.name} name match`} value={nameMatch} onChange={(event) => setNameMatch(event.target.value)} placeholder="Name contains" />
+      </label>
+      <label>Min weight (kg)<input aria-label={`${row.name} minimum weight`} type="number" min="0.001" step="0.001" value={weight} onChange={(event) => setWeight(event.target.value)} /></label>
+      <label>Surcharge (GHS)<input aria-label={`${row.name} surcharge`} type="number" min="0" step="0.01" value={surcharge} onChange={(event) => setSurcharge(event.target.value)} /></label>
+      <div>
+        <label><input aria-label={`${row.name} manual review`} type="checkbox" checked={manual} onChange={(event) => setManual(event.target.checked)} /> Review</label>
+        <label><input aria-label={`${row.name} active`} type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} /> Active</label>
+        <button type="button" className="ws-dash-btn is-small" disabled={saving} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button>
+        {error && <span className="ws-dash-field-error">{error}</span>}
+      </div>
+    </div>
+  );
+}
+
 export default function DeliveryPricingPage() {
   const { role } = useStaffAuth();
   const canConfigure = can(role, "delivery.configure");
 
   const summary = useAdminResource(() => getStaffDeliveryPricing());
-
-  const configs = useAdminList(
-    (page) =>
-      canConfigure
-        ? listPricingConfigurations({ page })
-        : emptyPage<DeliveryPricingConfiguration>(),
-    String(canConfigure),
-  );
 
   const zones = useAdminList(
     (page) =>
@@ -92,20 +256,32 @@ export default function DeliveryPricingPage() {
         : emptyPage<DeliveryPricingAuditEntry>(),
     String(canConfigure),
   );
-
-  const [configModalOpen, setConfigModalOpen] = useState(false);
-  const [configEditing, setConfigEditing] =
-    useState<DeliveryPricingConfiguration | null>(null);
-  const [configSubmitting, setConfigSubmitting] = useState(false);
-  const [configError, setConfigError] = useState("");
-  const [version, setVersion] = useState("");
-  const [baseFee, setBaseFee] = useState("");
-  const [ratePerKm, setRatePerKm] = useState("");
-  const [ratePerKg, setRatePerKg] = useState("");
-  const [minimumFee, setMinimumFee] = useState("");
-  const [maximumFee, setMaximumFee] = useState("");
-  const [roundingMode, setRoundingMode] = useState("");
-  const [configIsActive, setConfigIsActive] = useState(false);
+  const regions = useAdminList(
+    (page) => canConfigure ? listGhanaRegionalRates({ page }) : emptyPage<GhanaRegionalRate>(),
+    String(canConfigure),
+  );
+  const countries = useAdminList(
+    (page) => canConfigure ? listAfricanDeliveryCountries({ page }) : emptyPage<AfricanDeliveryCountry>(),
+    String(canConfigure),
+  );
+  const specialRules = useAdminList(
+    (page) => canConfigure ? listDeliverySpecialRules({ page }) : emptyPage<DeliverySpecialRule>(),
+    String(canConfigure),
+  );
+  const quoteRequests = useAdminList(
+    (page) => canConfigure ? listDeliveryQuoteRequests({ page }) : emptyPage<DeliveryQuoteRequest>(),
+    String(canConfigure),
+  );
+  const international = useAdminResource(
+    () => canConfigure
+      ? getInternationalDeliverySettings()
+      : Promise.resolve<InternationalDeliverySettings>({
+          manual_quotes_enabled: false,
+          instructions: "",
+          updated_at: "",
+        }),
+    [canConfigure],
+  );
 
   const [zoneModalOpen, setZoneModalOpen] = useState(false);
   const [zoneEditing, setZoneEditing] = useState<StaffDeliveryZone | null>(null);
@@ -128,72 +304,27 @@ export default function DeliveryPricingPage() {
   const [amount, setAmount] = useState("");
   const [zoneId, setZoneId] = useState("");
   const [surchargeIsActive, setSurchargeIsActive] = useState(false);
+  const [internationalEnabled, setInternationalEnabled] = useState(false);
+  const [internationalInstructions, setInternationalInstructions] = useState("");
+  const [internationalSaving, setInternationalSaving] = useState(false);
+  const [internationalError, setInternationalError] = useState("");
+  const [ruleCode, setRuleCode] = useState("");
+  const [ruleName, setRuleName] = useState("");
+  const [ruleProductType, setRuleProductType] = useState("");
+  const [ruleNameMatch, setRuleNameMatch] = useState("");
+  const [ruleMinWeight, setRuleMinWeight] = useState("");
+  const [ruleSurcharge, setRuleSurcharge] = useState("0");
+  const [ruleManualReview, setRuleManualReview] = useState(true);
+  const [ruleError, setRuleError] = useState("");
+  const [ruleSaving, setRuleSaving] = useState(false);
+  const [countryError, setCountryError] = useState("");
 
-  const activeConfig = summary.data?.active_configuration ?? null;
-
-  function openConfigCreate() {
-    setConfigEditing(null);
-    setVersion("");
-    setBaseFee("");
-    setRatePerKm("");
-    setRatePerKg("");
-    setMinimumFee("");
-    setMaximumFee("");
-    setRoundingMode("");
-    setConfigIsActive(false);
-    setConfigError("");
-    setConfigModalOpen(true);
-  }
-
-  function openConfigEdit(row: DeliveryPricingConfiguration) {
-    setConfigEditing(row);
-    setVersion(row.version);
-    setBaseFee(row.base_fee);
-    setRatePerKm(row.rate_per_km);
-    setRatePerKg(row.rate_per_kg);
-    setMinimumFee(row.minimum_fee);
-    setMaximumFee(row.maximum_fee ?? "");
-    setRoundingMode(row.rounding_mode);
-    setConfigIsActive(row.is_active);
-    setConfigError("");
-    setConfigModalOpen(true);
-  }
-
-  function closeConfigModal() {
-    setConfigModalOpen(false);
-    setConfigEditing(null);
-    setConfigError("");
-  }
-
-  async function submitConfig() {
-    setConfigError("");
-    setConfigSubmitting(true);
-    try {
-      const payload = {
-        base_fee: baseFee,
-        rate_per_km: ratePerKm,
-        rate_per_kg: ratePerKg,
-        minimum_fee: minimumFee,
-        maximum_fee: maximumFee || null,
-        rounding_mode: roundingMode,
-        is_active: configIsActive,
-        ...(version.trim() ? { version: version.trim() } : {}),
-      };
-      if (configEditing) {
-        await updatePricingConfiguration(configEditing.id, payload);
-      } else {
-        await createPricingConfiguration(payload);
-      }
-      setConfigModalOpen(false);
-      setConfigEditing(null);
-      configs.reload();
-      summary.reload();
-    } catch (error) {
-      setConfigError(describeAdminError(error));
-    } finally {
-      setConfigSubmitting(false);
+  useEffect(() => {
+    if (international.data) {
+      setInternationalEnabled(international.data.manual_quotes_enabled);
+      setInternationalInstructions(international.data.instructions);
     }
-  }
+  }, [international.data]);
 
   function openZoneCreate() {
     setZoneEditing(null);
@@ -308,6 +439,83 @@ export default function DeliveryPricingPage() {
     }
   }
 
+  async function saveRegionalRate(id: number, payload: Partial<GhanaRegionalRate>) {
+    await updateGhanaRegionalRate(id, payload);
+    regions.reload();
+    summary.reload();
+  }
+
+  async function toggleCountry(country: AfricanDeliveryCountry) {
+    setCountryError("");
+    try {
+      await updateAfricanDeliveryCountry(country.id, {
+        is_active: !country.is_active,
+      });
+      countries.reload();
+    } catch (error) {
+      setCountryError(describeAdminError(error));
+    }
+  }
+
+  async function saveSpecialRule(id: number, payload: Partial<DeliverySpecialRule>) {
+    await updateDeliverySpecialRule(id, payload);
+    specialRules.reload();
+  }
+
+  async function submitSpecialRule(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setRuleError("");
+    setRuleSaving(true);
+    try {
+      await createDeliverySpecialRule({
+        code: ruleCode.trim(),
+        name: ruleName.trim(),
+        product_type: ruleProductType,
+        product_name_contains: ruleNameMatch.trim(),
+        minimum_product_weight_kg: ruleMinWeight || null,
+        surcharge_amount: ruleSurcharge,
+        requires_manual_review: ruleManualReview,
+        is_active: true,
+      });
+      setRuleCode("");
+      setRuleName("");
+      setRuleProductType("");
+      setRuleNameMatch("");
+      setRuleMinWeight("");
+      setRuleSurcharge("0");
+      setRuleManualReview(true);
+      specialRules.reload();
+    } catch (error) {
+      setRuleError(describeAdminError(error));
+    } finally {
+      setRuleSaving(false);
+    }
+  }
+
+  async function saveInternationalSettings() {
+    setInternationalError("");
+    setInternationalSaving(true);
+    try {
+      await updateInternationalDeliverySettings({
+        manual_quotes_enabled: internationalEnabled,
+        instructions: internationalInstructions.trim(),
+      });
+      international.reload();
+    } catch (error) {
+      setInternationalError(describeAdminError(error));
+    } finally {
+      setInternationalSaving(false);
+    }
+  }
+
+  async function saveQuoteRequest(
+    reference: string,
+    payload: Pick<DeliveryQuoteRequest, "status" | "quoted_fee" | "admin_note">,
+  ) {
+    await updateDeliveryQuoteRequest(reference, payload);
+    quoteRequests.reload();
+  }
+
   const summaryZoneColumns: AdminColumn<StaffDeliveryZone>[] = [
     { key: "code", header: "Code", render: (row) => row.code },
     { key: "name", header: "Name", render: (row) => row.name },
@@ -347,52 +555,6 @@ export default function DeliveryPricingPage() {
           label={row.is_active ? "Active" : "Inactive"}
           tone={row.is_active ? "success" : "neutral"}
         />
-      ),
-    },
-  ];
-
-  const configColumns: AdminColumn<DeliveryPricingConfiguration>[] = [
-    { key: "version", header: "Version", render: (row) => row.version },
-    {
-      key: "active",
-      header: "Active",
-      render: (row) => (
-        <StatusBadge
-          label={row.is_active ? "Active" : "Inactive"}
-          tone={row.is_active ? "success" : "neutral"}
-        />
-      ),
-    },
-    { key: "base", header: "Base fee", render: (row) => money(row.base_fee) },
-    { key: "km", header: "Per km", render: (row) => money(row.rate_per_km) },
-    { key: "kg", header: "Per kg", render: (row) => money(row.rate_per_kg) },
-    {
-      key: "minimum",
-      header: "Min fee",
-      render: (row) => money(row.minimum_fee),
-    },
-    {
-      key: "maximum",
-      header: "Max fee",
-      render: (row) => row.maximum_fee ?? "—",
-    },
-    {
-      key: "updated",
-      header: "Updated",
-      render: (row) => formatDate(row.updated_at),
-    },
-    {
-      key: "actions",
-      header: "Edit",
-      align: "right",
-      render: (row) => (
-        <button
-          type="button"
-          className="ws-dash-btn is-small"
-          onClick={() => openConfigEdit(row)}
-        >
-          Edit
-        </button>
       ),
     },
   ];
@@ -499,68 +661,6 @@ export default function DeliveryPricingPage() {
         <>
           <div className="ws-dash-panel">
             <div className="ws-dash-panel-head">
-              <h2 className="ws-dash-panel-title">Active configuration</h2>
-            </div>
-            <div className="ws-dash-panel-body">
-              {activeConfig ? (
-                <dl className="ws-dash-detail">
-                  <dt className="ws-dash-detail-term">Version</dt>
-                  <dd className="ws-dash-detail-value">{activeConfig.version}</dd>
-                  <dt className="ws-dash-detail-term">Base fee</dt>
-                  <dd className="ws-dash-detail-value">
-                    {money(activeConfig.base_fee)}
-                  </dd>
-                  <dt className="ws-dash-detail-term">Rate per km</dt>
-                  <dd className="ws-dash-detail-value">
-                    {money(activeConfig.rate_per_km)}
-                  </dd>
-                  <dt className="ws-dash-detail-term">Rate per kg</dt>
-                  <dd className="ws-dash-detail-value">
-                    {money(activeConfig.rate_per_kg)}
-                  </dd>
-                  <dt className="ws-dash-detail-term">Minimum fee</dt>
-                  <dd className="ws-dash-detail-value">
-                    {money(activeConfig.minimum_fee)}
-                  </dd>
-                  <dt className="ws-dash-detail-term">Maximum fee</dt>
-                  <dd className="ws-dash-detail-value">
-                    {activeConfig.maximum_fee
-                      ? money(activeConfig.maximum_fee)
-                      : "No cap"}
-                  </dd>
-                  <dt className="ws-dash-detail-term">Currency</dt>
-                  <dd className="ws-dash-detail-value">
-                    {activeConfig.currency}
-                  </dd>
-                  <dt className="ws-dash-detail-term">Rounding</dt>
-                  <dd className="ws-dash-detail-value">
-                    {activeConfig.rounding_mode}
-                  </dd>
-                  <dt className="ws-dash-detail-term">
-                    Weight review threshold kg
-                  </dt>
-                  <dd className="ws-dash-detail-value">
-                    {activeConfig.review_weight_threshold_kg ?? "—"}
-                  </dd>
-                  <dt className="ws-dash-detail-term">
-                    Distance review threshold km
-                  </dt>
-                  <dd className="ws-dash-detail-value">
-                    {activeConfig.review_distance_threshold_km ?? "—"}
-                  </dd>
-                  <dt className="ws-dash-detail-term">Fee review threshold</dt>
-                  <dd className="ws-dash-detail-value">
-                    {activeConfig.review_fee_threshold ?? "—"}
-                  </dd>
-                </dl>
-              ) : (
-                <AdminEmpty message="No active pricing configuration." />
-              )}
-            </div>
-          </div>
-
-          <div className="ws-dash-panel">
-            <div className="ws-dash-panel-head">
               <h2 className="ws-dash-panel-title">Delivery zones</h2>
             </div>
             <div className="ws-dash-panel-body">
@@ -597,37 +697,6 @@ export default function DeliveryPricingPage() {
         </p>
       ) : (
         <>
-          <div className="ws-dash-panel">
-            <div className="ws-dash-panel-head">
-              <h2 className="ws-dash-panel-title">Pricing configurations</h2>
-              <button
-                type="button"
-                className="ws-dash-btn is-primary"
-                onClick={openConfigCreate}
-              >
-                New configuration
-              </button>
-            </div>
-            <div className="ws-dash-panel-body">
-              <AdminTable<DeliveryPricingConfiguration>
-                columns={configColumns}
-                rows={configs.rows}
-                rowKey={(row) => row.id}
-                loading={configs.loading}
-                error={configs.error}
-                emptyMessage="No pricing configurations yet."
-                onRetry={configs.reload}
-              />
-              <AdminPagination
-                page={configs.page}
-                totalPages={configs.totalPages}
-                count={configs.count}
-                onPageChange={configs.setPage}
-                noun="configurations"
-              />
-            </div>
-          </div>
-
           <div className="ws-dash-panel">
             <div className="ws-dash-panel-head">
               <h2 className="ws-dash-panel-title">Delivery zones</h2>
@@ -692,6 +761,147 @@ export default function DeliveryPricingPage() {
 
           <div className="ws-dash-panel">
             <div className="ws-dash-panel-head">
+              <h2 className="ws-dash-panel-title">Ghana regional rates</h2>
+            </div>
+            <div className="ws-dash-panel-body">
+              {regions.loading ? <AdminLoading /> : regions.error ? (
+                <AdminError message={regions.error} onRetry={regions.reload} />
+              ) : (
+                <div className="ws-dash-table-wrap">
+                  <table className="ws-dash-table">
+                    <thead><tr><th>Region</th><th>Rate version</th><th>Flat fee (GHS)</th><th>Per kg (GHS)</th><th>Enabled</th><th>Fallback when disabled</th><th>Action</th></tr></thead>
+                    <tbody>
+                      {regions.rows.map((row) => (
+                        <RegionalRateRow key={row.id} row={row} onSave={saveRegionalRate} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <AdminPagination page={regions.page} totalPages={regions.totalPages} count={regions.count} onPageChange={regions.setPage} noun="regions" />
+              <p className="ws-dash-note">Starter fees are configurable estimates, not guaranteed courier prices. Each regional rate replaces the fallback distance formula.</p>
+            </div>
+          </div>
+
+          <div className="ws-dash-panel">
+            <div className="ws-dash-panel-head">
+              <h2 className="ws-dash-panel-title">International delivery</h2>
+            </div>
+            <div className="ws-dash-panel-body">
+              {international.loading ? <AdminLoading /> : international.error ? (
+                <AdminError message={international.error} onRetry={international.reload} />
+              ) : (
+                <>
+                  <label className="ws-dash-field">
+                    <span className="ws-dash-field-label">Accept manual quotations</span>
+                    <input type="checkbox" checked={internationalEnabled} onChange={(event) => setInternationalEnabled(event.target.checked)} />
+                  </label>
+                  <label className="ws-dash-field">
+                    <span className="ws-dash-field-label">Customer instructions</span>
+                    <textarea className="ws-dash-input" maxLength={500} value={internationalInstructions} onChange={(event) => setInternationalInstructions(event.target.value)} />
+                  </label>
+                  {internationalError && <p className="ws-dash-field-error">{internationalError}</p>}
+                  <button type="button" className="ws-dash-btn is-primary" disabled={internationalSaving} onClick={() => void saveInternationalSettings()}>
+                    {internationalSaving ? "Saving…" : "Save international settings"}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="ws-dash-panel">
+            <div className="ws-dash-panel-head">
+              <h2 className="ws-dash-panel-title">African destination countries</h2>
+            </div>
+            <div className="ws-dash-panel-body">
+              {countryError && <p className="ws-dash-field-error">{countryError}</p>}
+              <AdminTable<AfricanDeliveryCountry>
+                columns={[
+                  { key: "code", header: "Code", render: (row) => row.country_code },
+                  { key: "name", header: "Country", render: (row) => row.country_name },
+                  { key: "active", header: "Enabled", render: (row) => <StatusBadge label={row.is_active ? "Enabled" : "Disabled"} tone={row.is_active ? "success" : "neutral"} /> },
+                  { key: "action", header: "Action", render: (row) => <button type="button" className="ws-dash-btn is-small" onClick={() => void toggleCountry(row)}>{row.is_active ? "Disable" : "Enable"}</button> },
+                ]}
+                rows={countries.rows}
+                rowKey={(row) => row.id}
+                loading={countries.loading}
+                error={countries.error}
+                emptyMessage="No African destinations configured."
+                onRetry={countries.reload}
+              />
+              <AdminPagination page={countries.page} totalPages={countries.totalPages} count={countries.count} onPageChange={countries.setPage} noun="countries" />
+              <p className="ws-dash-note">All international destinations use manual quotations; no domestic Ghana rate is applied.</p>
+            </div>
+          </div>
+
+          <div className="ws-dash-panel">
+            <div className="ws-dash-panel-head">
+              <h2 className="ws-dash-panel-title">Special delivery rules</h2>
+            </div>
+            <div className="ws-dash-panel-body">
+              <form className="ws-dash-form-grid" onSubmit={(event) => void submitSpecialRule(event)}>
+                <Field label="Rule code"><input className="ws-dash-input" required value={ruleCode} onChange={(event) => setRuleCode(event.target.value)} /></Field>
+                <Field label="Rule name"><input className="ws-dash-input" required value={ruleName} onChange={(event) => setRuleName(event.target.value)} /></Field>
+                <Field label="Product type">
+                  <select className="ws-dash-select" value={ruleProductType} onChange={(event) => setRuleProductType(event.target.value)}>
+                    <option value="">Any type</option>
+                    {["spare_part", "car", "electric_vehicle", "tricycle", "motorcycle_bike", "other"].map((value) => <option key={value} value={value}>{humanize(value)}</option>)}
+                  </select>
+                </Field>
+                <Field label="Product name contains"><input className="ws-dash-input" value={ruleNameMatch} onChange={(event) => setRuleNameMatch(event.target.value)} /></Field>
+                <Field label="Minimum product weight (kg)"><input className="ws-dash-input" type="number" min="0.001" step="0.001" value={ruleMinWeight} onChange={(event) => setRuleMinWeight(event.target.value)} /></Field>
+                <Field label="Additional charge (GHS)"><input className="ws-dash-input" type="number" min="0" step="0.01" value={ruleSurcharge} onChange={(event) => setRuleSurcharge(event.target.value)} /></Field>
+                <label className="ws-dash-field"><span className="ws-dash-field-label">Require manual review</span><input type="checkbox" checked={ruleManualReview} onChange={(event) => setRuleManualReview(event.target.checked)} /></label>
+                <div>
+                  <button type="submit" className="ws-dash-btn is-primary" disabled={ruleSaving}>{ruleSaving ? "Creating…" : "Create rule"}</button>
+                  {ruleError && <p className="ws-dash-field-error">{ruleError}</p>}
+                </div>
+              </form>
+              <AdminTable<DeliverySpecialRule>
+                columns={[
+                  { key: "code", header: "Code", render: (row) => row.code },
+                  { key: "name", header: "Name", render: (row) => row.name },
+                  { key: "match", header: "Match conditions", render: (row) => [row.product_type && humanize(row.product_type), row.product_name_contains && `Name contains “${row.product_name_contains}”`, row.minimum_product_weight_kg && `At least ${row.minimum_product_weight_kg} kg`].filter(Boolean).join(" · ") },
+                  { key: "fee", header: "Surcharge", render: (row) => money(row.surcharge_amount) },
+                  { key: "review", header: "Manual review", render: (row) => row.requires_manual_review ? "Required" : "No" },
+                  { key: "active", header: "Active", render: (row) => <StatusBadge label={row.is_active ? "Active" : "Inactive"} tone={row.is_active ? "success" : "neutral"} /> },
+                  { key: "actions", header: "Edit rule", render: (row) => <SpecialRuleRow row={row} onSave={saveSpecialRule} /> },
+                ]}
+                rows={specialRules.rows}
+                rowKey={(row) => row.id}
+                loading={specialRules.loading}
+                error={specialRules.error}
+                emptyMessage="No special delivery rules configured."
+                onRetry={specialRules.reload}
+              />
+              <AdminPagination page={specialRules.page} totalPages={specialRules.totalPages} count={specialRules.count} onPageChange={specialRules.setPage} noun="rules" />
+            </div>
+          </div>
+
+          <div className="ws-dash-panel">
+            <div className="ws-dash-panel-head">
+              <h2 className="ws-dash-panel-title">Manual delivery quotation requests</h2>
+            </div>
+            <div className="ws-dash-panel-body">
+              {quoteRequests.loading ? <AdminLoading /> : quoteRequests.error ? (
+                <AdminError message={quoteRequests.error} onRetry={quoteRequests.reload} />
+              ) : (
+                <div className="ws-dash-table-wrap">
+                  <table className="ws-dash-table">
+                    <thead><tr><th>Reference</th><th>Customer</th><th>Destination</th><th>Items</th><th>Review / quotation</th><th>Action</th></tr></thead>
+                    <tbody>
+                      {quoteRequests.rows.map((row) => <QuoteRequestRow key={row.reference} row={row} onSave={saveQuoteRequest} />)}
+                    </tbody>
+                  </table>
+                  {!quoteRequests.rows.length && <AdminEmpty message="No manual delivery requests." />}
+                </div>
+              )}
+              <AdminPagination page={quoteRequests.page} totalPages={quoteRequests.totalPages} count={quoteRequests.count} onPageChange={quoteRequests.setPage} noun="requests" />
+            </div>
+          </div>
+
+          <div className="ws-dash-panel">
+            <div className="ws-dash-panel-head">
               <h2 className="ws-dash-panel-title">Audit log</h2>
             </div>
             <div className="ws-dash-panel-body">
@@ -713,110 +923,6 @@ export default function DeliveryPricingPage() {
               />
             </div>
           </div>
-
-          <AdminModal
-            open={configModalOpen}
-            wide
-            title={configEditing ? "Edit configuration" : "New configuration"}
-            onClose={closeConfigModal}
-            footer={
-              <>
-                <button
-                  type="button"
-                  className="ws-dash-btn is-ghost"
-                  onClick={closeConfigModal}
-                  disabled={configSubmitting}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="ws-dash-btn is-primary"
-                  onClick={submitConfig}
-                  disabled={configSubmitting}
-                >
-                  {configSubmitting ? "Saving…" : "Save"}
-                </button>
-              </>
-            }
-          >
-            <div className="ws-dash-form-grid">
-              <Field label="Version">
-                <input
-                  className="ws-dash-input"
-                  type="text"
-                  value={version}
-                  onChange={(event) => setVersion(event.target.value)}
-                />
-              </Field>
-              <Field label="Rounding mode">
-                <input
-                  className="ws-dash-input"
-                  type="text"
-                  value={roundingMode}
-                  onChange={(event) => setRoundingMode(event.target.value)}
-                />
-              </Field>
-              <Field label="Base fee (GHS)">
-                <input
-                  className="ws-dash-input"
-                  type="number"
-                  step="0.01"
-                  value={baseFee}
-                  onChange={(event) => setBaseFee(event.target.value)}
-                />
-              </Field>
-              <Field label="Rate per km (GHS)">
-                <input
-                  className="ws-dash-input"
-                  type="number"
-                  step="0.01"
-                  value={ratePerKm}
-                  onChange={(event) => setRatePerKm(event.target.value)}
-                />
-              </Field>
-              <Field label="Rate per kg (GHS)">
-                <input
-                  className="ws-dash-input"
-                  type="number"
-                  step="0.01"
-                  value={ratePerKg}
-                  onChange={(event) => setRatePerKg(event.target.value)}
-                />
-              </Field>
-              <Field label="Minimum fee (GHS)">
-                <input
-                  className="ws-dash-input"
-                  type="number"
-                  step="0.01"
-                  value={minimumFee}
-                  onChange={(event) => setMinimumFee(event.target.value)}
-                />
-              </Field>
-              <Field label="Maximum fee (GHS)" hint="Leave blank for no cap.">
-                <input
-                  className="ws-dash-input"
-                  type="number"
-                  step="0.01"
-                  value={maximumFee}
-                  onChange={(event) => setMaximumFee(event.target.value)}
-                />
-              </Field>
-              <div className="is-span-2">
-                <label className="ws-dash-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={configIsActive}
-                    onChange={(event) => setConfigIsActive(event.target.checked)}
-                  />
-                  Active
-                </label>
-              </div>
-            </div>
-            {configError ? (
-              <p className="ws-dash-field-error">{configError}</p>
-            ) : null}
-          </AdminModal>
 
           <AdminModal
             open={zoneModalOpen}

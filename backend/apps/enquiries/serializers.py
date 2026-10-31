@@ -29,19 +29,9 @@ class VehicleEnquiryPublicSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "customer", "created_at"]
 
     def validate_product(self, product):
-        vehicle_types = {
-            Product.ProductType.CAR,
-            Product.ProductType.ELECTRIC_VEHICLE,
-            Product.ProductType.TRICYCLE,
-            Product.ProductType.MOTORCYCLE_BIKE,
-        }
         if product.publication_status != Product.PublicationStatus.PUBLISHED:
             raise serializers.ValidationError(
                 "This listing is not available for enquiry."
-            )
-        if product.product_type not in vehicle_types:
-            raise serializers.ValidationError(
-                "Enquiries are for published vehicle listings."
             )
         return product
 

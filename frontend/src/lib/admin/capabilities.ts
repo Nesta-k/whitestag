@@ -95,7 +95,7 @@ export const DASHBOARD_NAV: DashboardNavItem[] = [
   { href: "/dashboard/orders", label: "Orders", glyph: "▤", capability: "orders.view", group: "Operations" },
   { href: "/dashboard/payments", label: "Payments", glyph: "₵", capability: "payments.view", group: "Operations" },
   { href: "/dashboard/inventory", label: "Inventory", glyph: "▦", capability: "inventory.manage", group: "Operations" },
-  { href: "/dashboard/enquiries", label: "Vehicle enquiries", glyph: "✉", capability: "enquiries.manage", group: "Operations" },
+  { href: "/dashboard/enquiries", label: "Product enquiries", glyph: "✉", capability: "enquiries.manage", group: "Operations" },
 
   { href: "/dashboard/products", label: "Products", glyph: "❒", capability: "products.manage", group: "Catalogue" },
   { href: "/dashboard/categories", label: "Categories", glyph: "❏", capability: "categories.manage", group: "Catalogue" },
@@ -106,7 +106,6 @@ export const DASHBOARD_NAV: DashboardNavItem[] = [
   { href: "/dashboard/customers", label: "Customers", glyph: "◍", capability: "customers.view", group: "People" },
   { href: "/dashboard/users", label: "Staff & users", glyph: "◐", capability: "users.manage", group: "People" },
 
-  { href: "/dashboard/delivery-pricing", label: "Delivery pricing", glyph: "⛟", capability: "delivery.view", group: "System" },
 ];
 
 export function navForRole(role: string | null | undefined): DashboardNavItem[] {

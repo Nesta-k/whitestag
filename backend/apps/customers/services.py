@@ -27,7 +27,6 @@ def _lock_purchasable_product(product_id):
 
     if (
         product.publication_status != Product.PublicationStatus.PUBLISHED
-        or product.product_type != Product.ProductType.SPARE_PART
         or product.sales_method != Product.SalesMethod.DIRECT_PURCHASE
         or product.price is None
         or product.price <= 0

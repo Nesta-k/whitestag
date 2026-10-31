@@ -252,11 +252,213 @@ class DeliverySurcharge(models.Model):
         return self.name
 
 
+class GhanaRegionalDeliveryRate(models.Model):
+    region_code = models.SlugField(max_length=32, unique=True)
+    region_name = models.CharField(max_length=80, unique=True)
+    version = models.CharField(max_length=40, default="ghana-regions-v1")
+    flat_fee = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal("0"))],
+    )
+    rate_per_kg = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        default=Decimal("0"),
+        validators=[MinValueValidator(Decimal("0"))],
+    )
+    is_active = models.BooleanField(default=True)
+    allow_fallback = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["region_name", "pk"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(flat_fee__gte=0),
+                name="ghana_region_flat_fee_nonnegative",
+            ),
+            models.CheckConstraint(
+                condition=Q(rate_per_kg__gte=0),
+                name="ghana_region_weight_rate_nonnegative",
+            ),
+        ]
+
+    def __str__(self):
+        return self.region_name
+
+
+class AfricanDeliveryCountry(models.Model):
+    country_code = models.CharField(max_length=2, unique=True)
+    country_name = models.CharField(max_length=100, unique=True)
+    is_active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["country_name", "pk"]
+
+    def __str__(self):
+        return self.country_name
+
+
+class InternationalDeliverySettings(models.Model):
+    manual_quotes_enabled = models.BooleanField(default=True)
+    instructions = models.CharField(
+        max_length=500,
+        default="International delivery is quoted manually. No shipping fee is charged until a quotation is confirmed.",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "International delivery settings"
+        verbose_name_plural = "International delivery settings"
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def load(cls):
+        settings_obj, _ = cls.objects.get_or_create(pk=1)
+        return settings_obj
+
+    def __str__(self):
+        return "International delivery settings"
+
+
+class DeliverySpecialRule(models.Model):
+    code = models.SlugField(max_length=40, unique=True)
+    name = models.CharField(max_length=150)
+    product_type = models.CharField(
+        max_length=24,
+        choices=[("", "Any product type"), *Product.ProductType.choices],
+        blank=True,
+        default="",
+    )
+    product_name_contains = models.CharField(max_length=100, blank=True, default="")
+    minimum_product_weight_kg = models.DecimalField(
+        max_digits=10,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal("0.001"))],
+    )
+    surcharge_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0"),
+        validators=[MinValueValidator(Decimal("0"))],
+    )
+    requires_manual_review = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name", "pk"]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(surcharge_amount__gte=0),
+                name="delivery_special_surcharge_nonnegative",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(minimum_product_weight_kg__isnull=True)
+                    | Q(minimum_product_weight_kg__gt=0)
+                ),
+                name="delivery_special_min_weight_positive",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if not (
+            self.product_type
+            or self.product_name_contains
+            or self.minimum_product_weight_kg is not None
+        ):
+            raise ValidationError(
+                "A special delivery rule must specify at least one product match condition."
+            )
+
+    def __str__(self):
+        return self.name
+
+
+class DeliveryQuoteRequest(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        IN_PROGRESS = "in_progress", "In progress"
+        QUOTED = "quoted", "Quoted"
+        ACCEPTED = "accepted", "Accepted"
+        DECLINED = "declined", "Declined"
+        CANCELLED = "cancelled", "Cancelled"
+
+    reference = models.UUIDField(
+        default=uuid4,
+        primary_key=True,
+        editable=False,
+    )
+    customer = models.ForeignKey(
+        CustomerAccount,
+        related_name="delivery_quote_requests",
+        on_delete=models.PROTECT,
+    )
+    idempotency_key = models.UUIDField()
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    reason = models.CharField(max_length=255)
+    full_name = models.CharField(max_length=200)
+    email = models.EmailField(max_length=254)
+    phone = models.CharField(max_length=32)
+    address_line_1 = models.CharField(max_length=255)
+    address_line_2 = models.CharField(max_length=255, blank=True)
+    city = models.CharField(max_length=100)
+    region = models.CharField(max_length=100, blank=True)
+    country = models.CharField(max_length=2)
+    postal_code = models.CharField(max_length=24, blank=True)
+    items_snapshot = models.JSONField(default=list)
+    quoted_fee = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(Decimal("0"))],
+    )
+    admin_note = models.TextField(blank=True)
+    pricing_snapshot = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["customer", "idempotency_key"],
+                name="uniq_delivery_quote_customer_idempotency",
+            ),
+            models.CheckConstraint(
+                condition=Q(quoted_fee__isnull=True) | Q(quoted_fee__gte=0),
+                name="delivery_quote_fee_nonnegative",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Delivery quote {self.reference}"
+
+
 class DeliveryPricingAuditLog(models.Model):
     class ConfigurationType(models.TextChoices):
         PRICING = "pricing", "Pricing configuration"
         ZONE = "zone", "Delivery zone"
         SURCHARGE = "surcharge", "Delivery surcharge"
+        REGION = "region", "Ghana regional rate"
+        COUNTRY = "country", "African delivery country"
+        RULE = "rule", "Special delivery rule"
+        INTL_SETTINGS = "intl_settings", "International settings"
+        QUOTE_REQUEST = "quote_request", "Delivery quote request"
 
     class Action(models.TextChoices):
         CREATED = "created", "Created"

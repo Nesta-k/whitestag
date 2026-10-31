@@ -22,7 +22,9 @@ export default async function VehiclesPage() {
 
   try {
     const responses = await Promise.all(
-      vehicleTypes.map((product_type) => getProducts({ product_type })),
+      vehicleTypes.map((product_type) =>
+        getProducts({ product_type, sales_method: "direct_purchase" }),
+      ),
     );
     vehicles = responses
       .flatMap((response) => response.results)

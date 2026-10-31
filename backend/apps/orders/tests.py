@@ -36,10 +36,15 @@ from apps.inventory.services import (
 
 from .admin import DeliveryPricingConfigurationAdmin
 from .models import (
+    AfricanDeliveryCountry,
+    DeliveryQuoteRequest,
+    DeliverySpecialRule,
     DeliveryPricingAuditLog,
     DeliveryPricingConfiguration,
     DeliverySurcharge,
     DeliveryZone,
+    GhanaRegionalDeliveryRate,
+    InternationalDeliverySettings,
     Order,
     OrderItem,
     Payment,
@@ -133,6 +138,9 @@ class OrderApiTests(TestCase):
             minimum_fee=Decimal("0.00"),
             currency="GHS",
         )
+        GhanaRegionalDeliveryRate.objects.filter(
+            region_name=self.shipping["region"],
+        ).update(is_active=False, allow_fallback=True)
 
     def create_customer(self, email):
         user = get_user_model().objects.create_user(
@@ -335,11 +343,13 @@ class OrderApiTests(TestCase):
             "remote-handling",
         )
 
-    def test_invalid_or_inactive_delivery_area_does_not_create_order(self):
-        unknown_area = {**self.shipping, "city": "Tamale", "region": "Northern"}
-        invalid_response = self.checkout(shipping=unknown_area)
-        self.assertEqual(invalid_response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("delivery_pricing", invalid_response.data)
+    def test_regional_pricing_works_without_zone_and_inactive_fallback_is_blocked(self):
+        northern_quote = calculate_delivery_pricing(
+            {"city": "Tamale", "region": "Northern", "country": "GH"},
+            [(self.product, self.cart_item.quantity)],
+        )
+        self.assertEqual(northern_quote["pricing_mode"], "ghana_regional")
+        self.assertEqual(northern_quote["delivery_fee"], "280.00")
         self.assertFalse(Order.objects.exists())
 
         self.delivery_zone.is_active = False
@@ -559,6 +569,253 @@ class OrderApiTests(TestCase):
             {"accra", "kumasi"},
         )
 
+    def test_seeded_delivery_rates_cover_all_ghana_regions(self):
+        expected = {
+            "Greater Accra": "50.00",
+            "Eastern": "90.00",
+            "Central": "100.00",
+            "Ashanti": "130.00",
+            "Volta": "140.00",
+            "Western": "160.00",
+            "Bono": "180.00",
+            "Bono East": "190.00",
+            "Western North": "200.00",
+            "Ahafo": "200.00",
+            "Oti": "220.00",
+            "Northern": "280.00",
+            "Upper East": "330.00",
+            "Upper West": "350.00",
+            "Savannah": "320.00",
+            "North East": "330.00",
+        }
+        self.assertEqual(
+            dict(
+                GhanaRegionalDeliveryRate.objects.values_list(
+                    "region_name",
+                    "flat_fee",
+                )
+            ),
+            {name: Decimal(fee) for name, fee in expected.items()},
+        )
+
+    def test_regional_rate_replaces_fallback_formula_and_applies_weight(self):
+        rate = GhanaRegionalDeliveryRate.objects.get(region_name="Eastern")
+        rate.flat_fee = Decimal("90.00")
+        rate.rate_per_kg = Decimal("2.0000")
+        rate.save()
+        self.pricing.base_fee = Decimal("500.00")
+        self.pricing.rate_per_km = Decimal("20.0000")
+        self.pricing.save()
+
+        quote = calculate_delivery_pricing(
+            {"city": "Koforidua", "region": "Eastern", "country": "GH"},
+            [(self.product, 1)],
+        )
+
+        self.assertEqual(quote["status"], "estimated")
+        self.assertEqual(quote["pricing_mode"], "ghana_regional")
+        self.assertEqual(quote["base_fee"], "90.00")
+        self.assertEqual(quote["distance_component"], "0")
+        self.assertEqual(Decimal(quote["weight_component"]), Decimal("2.00"))
+        self.assertEqual(quote["delivery_fee"], "92.00")
+
+    def test_inactive_region_requires_review_without_fallback_coverage(self):
+        rate = GhanaRegionalDeliveryRate.objects.get(region_name="Eastern")
+        rate.is_active = False
+        rate.allow_fallback = False
+        rate.save()
+
+        quote = calculate_delivery_pricing(
+            {"city": "Koforidua", "region": "Eastern", "country": "GH"},
+            [(self.product, 1)],
+        )
+
+        self.assertTrue(quote["requires_manual_review"])
+        self.assertIsNone(quote["delivery_fee"])
+
+    def test_inactive_region_uses_fallback_only_when_enabled(self):
+        rate = GhanaRegionalDeliveryRate.objects.get(region_name="Eastern")
+        rate.is_active = False
+        rate.allow_fallback = True
+        rate.save()
+        zone = DeliveryZone.objects.create(
+            code="koforidua",
+            name="Koforidua",
+            city="Koforidua",
+            region="Eastern",
+            estimated_distance_km=Decimal("10.000"),
+        )
+
+        quote = calculate_delivery_pricing(
+            {"city": zone.city, "region": zone.region, "country": "GH"},
+            [(self.product, 1)],
+        )
+
+        self.assertEqual(quote["pricing_mode"], "distance_formula")
+        self.assertEqual(quote["estimated_distance_km"], "10.000")
+
+    def test_regional_rate_includes_global_and_approved_product_surcharges(self):
+        rate = GhanaRegionalDeliveryRate.objects.get(region_name="Eastern")
+        rate.rate_per_kg = Decimal("2.0000")
+        rate.save()
+        DeliverySurcharge.objects.create(
+            code="east-general",
+            name="Approved regional handling",
+            amount=Decimal("5.00"),
+            is_active=True,
+        )
+        DeliverySpecialRule.objects.create(
+            code="brake-special-handling",
+            name="Brake-pad special handling",
+            product_name_contains="Brake pad",
+            surcharge_amount=Decimal("3.00"),
+            requires_manual_review=False,
+            is_active=True,
+        )
+
+        quote = calculate_delivery_pricing(
+            {"city": "Koforidua", "region": "Eastern", "country": "GH"},
+            [(self.product, 1)],
+        )
+
+        self.assertEqual(quote["delivery_fee"], "100.00")
+        self.assertEqual(
+            {item["code"] for item in quote["surcharges"]},
+            {"east-general", "special:brake-special-handling"},
+        )
+
+    def test_international_delivery_creates_manual_request_without_fee_or_order(self):
+        quote = calculate_delivery_pricing(
+            {"city": "Lagos", "region": "", "country": "NG"},
+            [(self.product, 1)],
+        )
+        self.assertEqual(quote["pricing_mode"], "international_manual")
+        self.assertTrue(quote["quote_request_available"])
+        self.assertIsNone(quote["delivery_fee"])
+
+        payload = {
+            **self.shipping,
+            "city": "Lagos",
+            "region": "",
+            "country": "NG",
+            "idempotency_key": str(uuid4()),
+        }
+        response = self.client.post(
+            reverse("api:orders:delivery-quote-request"),
+            payload,
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        request = DeliveryQuoteRequest.objects.get(reference=response.data["reference"])
+        self.assertEqual(request.country, "NG")
+        self.assertEqual(request.status, DeliveryQuoteRequest.Status.PENDING)
+        self.assertEqual(request.pricing_snapshot["pricing_mode"], "international_manual")
+        self.assertIsNone(request.quoted_fee)
+        self.assertFalse(Order.objects.exists())
+        self.assertTrue(CartItem.objects.filter(pk=self.cart_item.pk).exists())
+
+    def test_admin_can_quote_manual_request_and_change_is_audited(self):
+        created = self.client.post(
+            reverse("api:orders:delivery-quote-request"),
+            {
+                **self.shipping,
+                "country": "NG",
+                "city": "Lagos",
+                "region": "",
+                "idempotency_key": str(uuid4()),
+            },
+            format="json",
+        )
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED)
+        quote_request = DeliveryQuoteRequest.objects.get(
+            reference=created.data["reference"],
+        )
+        staff_user = get_user_model().objects.create_superuser(
+            username=uuid4().hex,
+            email="delivery-admin@example.com",
+            password="test-password-for-delivery-admin",
+        )
+        admin_client = APIClient()
+        admin_client.force_authenticate(user=staff_user)
+
+        updated = admin_client.patch(
+            reverse(
+                "api:orders:superadmin-delivery-quote-request-detail",
+                args=[quote_request.reference],
+            ),
+            {
+                "status": DeliveryQuoteRequest.Status.QUOTED,
+                "quoted_fee": "250.00",
+                "admin_note": "Transport quotation prepared.",
+            },
+            format="json",
+        )
+
+        self.assertEqual(updated.status_code, status.HTTP_200_OK)
+        quote_request.refresh_from_db()
+        self.assertEqual(quote_request.status, DeliveryQuoteRequest.Status.QUOTED)
+        self.assertEqual(quote_request.quoted_fee, Decimal("250.00"))
+        audit = DeliveryPricingAuditLog.objects.get(
+            configuration_type=DeliveryPricingAuditLog.ConfigurationType.QUOTE_REQUEST,
+            object_id=str(quote_request.reference),
+            action=DeliveryPricingAuditLog.Action.UPDATED,
+        )
+        self.assertEqual(audit.actor, staff_user)
+        self.assertEqual(audit.action, DeliveryPricingAuditLog.Action.UPDATED)
+
+    def test_special_product_rules_require_manual_review(self):
+        vehicle = self.create_product(
+            sku="ORDER-CAR",
+            name="Electric vehicle",
+            slug="order-car",
+            product_type=Product.ProductType.ELECTRIC_VEHICLE,
+        )
+        heavy_part = self.create_product(
+            sku="ORDER-HEAVY",
+            name="Heavy engine assembly",
+            slug="order-heavy",
+            weight_kg=Decimal("35.000"),
+        )
+        battery = self.create_product(
+            sku="ORDER-BATTERY",
+            name="EV battery pack",
+            slug="order-battery",
+        )
+        for product in (vehicle, heavy_part, battery):
+            with self.subTest(product=product.sku):
+                quote = calculate_delivery_pricing(
+                    {"city": "Koforidua", "region": "Eastern", "country": "GH"},
+                    [(product, 1)],
+                )
+                self.assertTrue(quote["requires_manual_review"])
+                self.assertIsNone(quote["delivery_fee"])
+
+    def test_regional_order_snapshots_version_and_fee(self):
+        rate = GhanaRegionalDeliveryRate.objects.get(
+            region_name="Greater Accra",
+        )
+        rate.is_active = True
+        rate.allow_fallback = False
+        rate.flat_fee = Decimal("50.00")
+        rate.version = "greater-accra-v2"
+        rate.save()
+
+        response = self.checkout()
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        order = Order.objects.get(public_reference=response.data["public_reference"])
+        self.assertEqual(order.delivery_fee, Decimal("50.00"))
+        self.assertIsNone(order.delivery_zone)
+        self.assertEqual(
+            order.delivery_pricing_snapshot["formula_version"],
+            "greater-accra-v2",
+        )
+        self.assertEqual(
+            order.delivery_pricing_snapshot["pricing_mode"],
+            "ghana_regional",
+        )
+
     def test_checkout_rejects_zero_price_and_unsupported_currency(self):
         self.product.price = Decimal("0.00")
         self.product.save(update_fields=["price"])
@@ -595,7 +852,6 @@ class OrderApiTests(TestCase):
 
     def test_ineligible_product_is_rejected_without_clearing_cart(self):
         cases = (
-            ("product_type", Product.ProductType.CAR),
             ("sales_method", Product.SalesMethod.QUOTATION),
             ("publication_status", Product.PublicationStatus.DRAFT),
             ("price", None),
@@ -615,7 +871,6 @@ class OrderApiTests(TestCase):
                     self.product,
                     field,
                     {
-                        "product_type": Product.ProductType.SPARE_PART,
                         "sales_method": Product.SalesMethod.DIRECT_PURCHASE,
                         "publication_status": Product.PublicationStatus.PUBLISHED,
                         "price": Decimal("12.50"),
@@ -623,6 +878,29 @@ class OrderApiTests(TestCase):
                 )
                 self.product.save(update_fields=[field])
 
+        self.inventory.refresh_from_db()
+        self.assertEqual(self.inventory.reserved_quantity, 0)
+
+    def test_direct_purchase_vehicle_requires_separate_delivery_quotation(self):
+        self.product.product_type = Product.ProductType.CAR
+        self.product.save(update_fields=["product_type"])
+
+        response = self.checkout()
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("delivery_pricing", response.data)
+        self.assertFalse(Order.objects.exists())
+
+        quote_request = self.client.post(
+            reverse("api:orders:delivery-quote-request"),
+            {
+                **self.shipping,
+                "idempotency_key": str(uuid4()),
+            },
+            format="json",
+        )
+        self.assertEqual(quote_request.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(DeliveryQuoteRequest.objects.count(), 1)
         self.inventory.refresh_from_db()
         self.assertEqual(self.inventory.reserved_quantity, 0)
 
@@ -918,11 +1196,29 @@ class OrderApiTests(TestCase):
         self.client.force_authenticate(user=superuser)
         updated = self.client.patch(
             config_url,
-            {"base_fee": "7.25", "version": "test-zero-rates-v2"},
+            {
+                "base_fee": "7.25",
+                "rounding_mode": DeliveryPricingConfiguration.RoundingMode.HALF_EVEN,
+                "version": "test-zero-rates-v2",
+            },
             format="json",
         )
         self.assertEqual(updated.status_code, status.HTTP_200_OK)
         self.assertEqual(updated.data["base_fee"], "7.25")
+        self.assertEqual(
+            updated.data["rounding_mode"],
+            DeliveryPricingConfiguration.RoundingMode.HALF_EVEN,
+        )
+
+        invalid_rounding = self.client.patch(
+            config_url,
+            {"rounding_mode": "unsupported"},
+            format="json",
+        )
+        self.assertEqual(
+            invalid_rounding.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
 
         invalid = self.client.patch(
             config_url,
@@ -2368,6 +2664,7 @@ class PaystackClientTests(SimpleTestCase):
                 "amount": 2500,
                 "currency": "GHS",
                 "reference": "ws_test_reference",
+                "callback_url": "http://localhost:3000/checkout/complete",
             },
         )
         self.assertEqual(request.get_header("Authorization"), "Bearer test-secret")

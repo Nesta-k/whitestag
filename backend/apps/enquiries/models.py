@@ -13,7 +13,7 @@ class VehicleEnquiry(models.Model):
         Product,
         related_name="enquiries",
         on_delete=models.CASCADE,
-        help_text="The vehicle being enquired about."
+        help_text="The product being enquired about."
     )
     customer = models.ForeignKey(
         CustomerAccount,
@@ -41,7 +41,7 @@ class VehicleEnquiry(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
-        verbose_name_plural = "Vehicle Enquiries"
+        verbose_name_plural = "Product Enquiries"
 
     def __str__(self):
         return f"Enquiry for {self.product.name} by {self.name}"

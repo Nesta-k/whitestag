@@ -1,6 +1,9 @@
-from rest_framework import serializers
+from uuid import uuid4
+
 from django.db import transaction
 from django.utils import timezone
+from rest_framework import serializers
+from rest_framework.validators import UniqueValidator
 
 from .image_urls import public_image_url
 from .media_service import upload_media_file, validate_image_file
@@ -115,6 +118,19 @@ class AdminProductSpecificationSerializer(serializers.ModelSerializer):
 
 
 class AdminProductSerializer(serializers.ModelSerializer):
+    sku = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=64,
+        validators=[UniqueValidator(queryset=Product.objects.all())],
+    )
+    slug = serializers.SlugField(read_only=True)
+    initial_stock_quantity = serializers.IntegerField(
+        write_only=True,
+        required=False,
+        min_value=0,
+        max_value=2_147_483_647,
+    )
     category = CategorySummarySerializer(read_only=True)
     brand = BrandSerializer(read_only=True)
     category_id = serializers.PrimaryKeyRelatedField(
@@ -153,6 +169,7 @@ class AdminProductSerializer(serializers.ModelSerializer):
             "publication_status",
             "price",
             "weight_kg",
+            "initial_stock_quantity",
             "currency",
             "is_featured",
             "featured_order",
@@ -162,6 +179,14 @@ class AdminProductSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "category", "brand", "created_at", "updated_at"]
+
+    def validate_initial_stock_quantity(self, value):
+        if self.instance is not None:
+            raise serializers.ValidationError(
+                "Initial stock can only be set when creating a product. "
+                "Use the inventory page to change stock."
+            )
+        return value
 
     def validate(self, attrs):
         request = self.context.get("request")
@@ -263,14 +288,13 @@ class AdminProductSerializer(serializers.ModelSerializer):
         currency = attrs.get("currency", getattr(self.instance, "currency", "GHS"))
         if (
             publication_status == Product.PublicationStatus.PUBLISHED
-            and product_type == Product.ProductType.SPARE_PART
             and sales_method == Product.SalesMethod.DIRECT_PURCHASE
             and (price is None or price <= 0 or currency != "GHS")
         ):
             raise serializers.ValidationError(
                 {
                     "price": (
-                        "Published direct-purchase spare parts need a positive "
+                        "Published direct-purchase products need a positive "
                         "GHS price."
                     )
                 }
@@ -279,9 +303,26 @@ class AdminProductSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
+        initial_stock_quantity = validated_data.pop("initial_stock_quantity", 0)
         images = validated_data.pop("images", [])
         specifications = validated_data.pop("specifications", [])
         product = Product.objects.create(**validated_data)
+
+        from apps.inventory.models import InventoryRecord
+
+        if initial_stock_quantity:
+            from apps.inventory.services import receive_stock
+
+            request = self.context.get("request")
+            receive_stock(
+                product.pk,
+                initial_stock_quantity,
+                idempotency_key=uuid4(),
+                reason="Initial stock at product creation",
+                created_by=request.user if request else None,
+            )
+        else:
+            InventoryRecord.objects.create(product=product)
 
         # Enforce maximum 3 images
         images = images[:3]

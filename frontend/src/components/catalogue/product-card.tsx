@@ -5,13 +5,13 @@ import Link from "next/link";
 import { useState } from "react";
 import type { Product } from "@/types/api";
 import { formatPrice } from "@/lib/format";
+import { describeCartActionError } from "@/lib/api/cart";
 import { useAuth } from "@/store/auth-context";
 import { useCart } from "@/store/cart-context";
 import { useWishlist } from "@/store/wishlist-context";
 
 function isPurchasable(product: Product): boolean {
   return (
-    product.product_type === "spare_part" &&
     product.sales_method === "direct_purchase" &&
     product.price !== null &&
     Number(product.price) > 0 &&
@@ -39,11 +39,7 @@ export default function ProductCard({ product }: { product: Product }) {
       await addItem(product.id);
       setMessage("Added to your cart.");
     } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "We could not add this item. Please try again.",
-      );
+      setMessage(describeCartActionError(error));
     } finally {
       setAdding(false);
     }

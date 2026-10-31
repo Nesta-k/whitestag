@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useState } from "react";
 import { formatPrice } from "@/lib/format";
 import { useAuth } from "@/store/auth-context";
@@ -88,9 +89,22 @@ export default function CartPage() {
                     item.product ? `View ${item.product.name}` : "Browse catalogue"
                   }
                 >
-                  <span className="product-image-placeholder" aria-hidden="true">
-                    WS
-                  </span>
+                  {item.product?.image_url ? (
+                    <Image
+                      src={item.product.image_url}
+                      alt={item.product.name}
+                      fill
+                      sizes="150px"
+                      unoptimized
+                    />
+                  ) : (
+                    <span
+                      className="product-image-placeholder"
+                      aria-hidden="true"
+                    >
+                      WS
+                    </span>
+                  )}
                 </Link>
                 <div className="cart-item-info">
                   <h2>
@@ -140,9 +154,9 @@ export default function CartPage() {
           <p className="cart-note">
             Prices and availability are confirmed when you continue to checkout.
           </p>
-          <button className="primary-link checkout-placeholder" disabled>
-            Checkout coming soon
-          </button>
+          <Link className="primary-link" href="/checkout">
+            Proceed to checkout <span aria-hidden="true">→</span>
+          </Link>
         </>
       )}
     </section>

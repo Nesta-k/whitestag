@@ -15,6 +15,7 @@ export interface AdminProductListParams {
   publication_status?: string;
   product_type?: string;
   sales_method?: string;
+  page_size?: number;
   page?: number;
 }
 

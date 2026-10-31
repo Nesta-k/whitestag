@@ -1,9 +1,11 @@
 from decimal import Decimal
+from uuid import uuid4
 
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.db.models import Q
+from django.utils.text import slugify
 
 
 class ProductType(models.TextChoices):
@@ -171,6 +173,18 @@ class Product(models.Model):
             raise ValidationError("A product can take up to 3 product images.")
 
     def save(self, *args, **kwargs):
+        if not self.sku:
+            self.sku = f"WS-{uuid4().hex.upper()}"
+        if not self.slug:
+            base_slug = slugify(self.name)[:220].rstrip("-") or "product"
+            self.slug = base_slug
+            suffix = 2
+            while Product.objects.filter(slug=self.slug).exclude(pk=self.pk).exists():
+                suffix_text = f"-{suffix}"
+                self.slug = (
+                    f"{base_slug[: 220 - len(suffix_text)].rstrip('-')}{suffix_text}"
+                )
+                suffix += 1
         if not self.product_type and self.category_id:
             try:
                 self.product_type = self.category.product_type

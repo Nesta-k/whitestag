@@ -40,7 +40,12 @@ const DEFAULT_SECTION_ORDER = [
 
 async function loadVehicleProducts(): Promise<Product[]> {
   const responses = await Promise.allSettled(
-    VEHICLE_TYPES.map((productType) => getProducts({ product_type: productType })),
+    VEHICLE_TYPES.map((productType) =>
+      getProducts({
+        product_type: productType,
+        sales_method: "direct_purchase",
+      }),
+    ),
   );
   const seen = new Set<number>();
   const products: Product[] = [];
@@ -109,7 +114,9 @@ export default async function Home() {
     featured_products: settings.show_featured_products ? (
       <TopProducts
         settings={settings}
-        initialProducts={featured_products}
+        initialProducts={featured_products.filter(
+          (product) => product.sales_method === "direct_purchase",
+        )}
         categories={featured_categories}
       />
     ) : null,

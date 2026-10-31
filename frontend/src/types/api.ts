@@ -141,6 +141,8 @@ export interface UserProfile {
 export interface CustomerAccount {
   id: number;
   email: string;
+  first_name: string;
+  last_name: string;
   created_at: string;
 }
 
@@ -155,6 +157,7 @@ export interface CartProduct {
   id: number;
   name: string;
   slug: string;
+  image_url: string;
   product_type: string;
   price: string | null;
   currency: string;
@@ -196,14 +199,42 @@ export interface DeliveryZone {
 }
 
 export interface DeliveryQuote {
-  zone_code: string;
-  zone_name: string;
-  estimated_distance_km: string | null;
-  delivery_fee: string;
+  status: "estimated" | "manual_review";
+  requires_manual_review: boolean;
+  review_reason: string;
+  pricing_mode?: "distance_formula" | "ghana_regional" | "international_manual";
   currency: string;
-  requires_review: boolean;
-  subtotal: string;
-  total: string;
+  delivery_fee: string | null;
+  subtotal: string | null;
+  order_total: string | null;
+  base_fee?: string | null;
+  distance_component?: string | null;
+  weight_component?: string | null;
+  estimated_distance_km?: string | null;
+  shipment_weight_kg?: string | null;
+  surcharges?: { code: string; name: string; amount: string }[];
+  destination?: Record<string, string>;
+  quote_request_available?: boolean;
+}
+
+export interface DeliveryOptions {
+  regions: {
+    region_code: string;
+    region_name: string;
+    is_active: boolean;
+    allow_fallback: boolean;
+  }[];
+  countries: { country_code: string; country_name: string }[];
+  international: {
+    manual_quotes_enabled: boolean;
+    instructions: string;
+    updated_at: string;
+  };
+}
+
+export interface DeliveryQuoteRequestResult {
+  reference: string;
+  status: string;
 }
 
 export interface OrderItem {
@@ -242,24 +273,21 @@ export interface Order {
 }
 
 export interface CheckoutPayload {
-  idempotency_key: string;
-  delivery_zone_code: string;
-  shipping_full_name: string;
-  shipping_email: string;
-  shipping_phone: string;
-  shipping_address_line_1: string;
-  shipping_address_line_2?: string;
-  shipping_city: string;
-  shipping_region: string;
-  shipping_postal_code?: string;
-  shipping_country?: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  address_line_1: string;
+  address_line_2?: string;
+  city: string;
+  region: string;
+  postal_code?: string;
+  country?: string;
 }
 
 export interface PaymentInit {
-  payment_reference: string;
-  authorization_url: string;
-  amount: string;
-  currency: string;
+  reference: string;
+  status: string;
+  authorization_url: string | null;
 }
 
 // ─── Enquiries ────────────────────────────────────────────────────────────────

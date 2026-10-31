@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 import environ
+from corsheaders.defaults import default_headers
 from django.core.exceptions import ImproperlyConfigured
 
 
@@ -20,6 +21,10 @@ if len(SECRET_KEY) < 50:
 
 DEBUG = env.bool("DJANGO_DEBUG")
 PAYSTACK_SECRET_KEY = env("PAYSTACK_SECRET_KEY", default="")
+FRONTEND_BASE_URL = env(
+    "FRONTEND_BASE_URL",
+    default="http://localhost:3000",
+).rstrip("/")
 GOOGLE_OAUTH_CLIENT_ID = env("GOOGLE_OAUTH_CLIENT_ID", default="")
 ORDER_EXPIRY_HOURS = env.int("ORDER_EXPIRY_HOURS", default=24)
 if ORDER_EXPIRY_HOURS <= 0:
@@ -27,6 +32,7 @@ if ORDER_EXPIRY_HOURS <= 0:
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=[])
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
+CORS_ALLOW_HEADERS = (*default_headers, "idempotency-key")
 
 CLOUDINARY_CLOUD_NAME = env("CLOUDINARY_CLOUD_NAME", default="")
 CLOUDINARY_API_KEY = env("CLOUDINARY_API_KEY", default="")

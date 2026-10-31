@@ -12,6 +12,8 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from apps.inventory.models import InventoryRecord, StockMovement
+
 from .models import (
     Brand,
     Category,
@@ -232,6 +234,80 @@ class CatalogueApiTests(TestCase):
         product.refresh_from_db()
         self.assertEqual(product.publication_status, "archived")
 
+    def test_staff_product_api_generates_sku_when_omitted(self):
+        staff = get_user_model().objects.create_user(
+            username=uuid4().hex,
+            email="sku-generation-staff@example.com",
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=staff)
+
+        response = self.client.post(
+            reverse("api:catalogue:staff-product-list"),
+            {
+                "name": "Automatically numbered part",
+                "category_id": self.parts_category.pk,
+                "sales_method": Product.SalesMethod.DIRECT_PURCHASE,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertRegex(response.data["sku"], r"^WS-[A-F0-9]{32}$")
+        self.assertEqual(response.data["slug"], "automatically-numbered-part")
+        product = Product.objects.get(slug="automatically-numbered-part")
+        self.assertEqual(product.sku, response.data["sku"])
+        self.assertEqual(
+            InventoryRecord.objects.get(product=product).available_quantity,
+            0,
+        )
+
+        duplicate_name_response = self.client.post(
+            reverse("api:catalogue:staff-product-list"),
+            {
+                "name": "Automatically numbered part",
+                "category_id": self.parts_category.pk,
+                "sales_method": Product.SalesMethod.DIRECT_PURCHASE,
+            },
+            format="json",
+        )
+        self.assertEqual(
+            duplicate_name_response.status_code,
+            status.HTTP_201_CREATED,
+        )
+        self.assertEqual(
+            duplicate_name_response.data["slug"],
+            "automatically-numbered-part-2",
+        )
+
+    def test_staff_product_creation_records_initial_stock(self):
+        staff = get_user_model().objects.create_user(
+            username=uuid4().hex,
+            email="initial-stock-staff@example.com",
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=staff)
+
+        response = self.client.post(
+            reverse("api:catalogue:staff-product-list"),
+            {
+                "name": "Product with initial stock",
+                "category_id": self.parts_category.pk,
+                "sales_method": Product.SalesMethod.DIRECT_PURCHASE,
+                "initial_stock_quantity": 6,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        product = Product.objects.get(pk=response.data["id"])
+        inventory = InventoryRecord.objects.get(product=product)
+        self.assertEqual(inventory.available_quantity, 6)
+        movement = StockMovement.objects.get(inventory_record=inventory)
+        self.assertEqual(movement.movement_type, StockMovement.MovementType.RECEIPT)
+        self.assertEqual(movement.quantity, 6)
+        self.assertEqual(movement.created_by, staff)
+
     def test_staff_product_api_rejects_unpriced_direct_purchase_publication(self):
         staff = get_user_model().objects.create_user(
             username=uuid4().hex,
@@ -259,6 +335,26 @@ class CatalogueApiTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(Product.objects.filter(sku="ADMIN-UNPRICED").exists())
+
+        vehicle_response = self.client.post(
+            reverse("api:catalogue:staff-product-list"),
+            {
+                "sku": "ADMIN-UNPRICED-VEHICLE",
+                "name": "Unpriced direct-purchase vehicle",
+                "slug": "admin-unpriced-direct-purchase-vehicle",
+                "category_id": self.vehicle_category.pk,
+                "product_type": Product.ProductType.CAR,
+                "sales_method": Product.SalesMethod.DIRECT_PURCHASE,
+                "publication_status": Product.PublicationStatus.PUBLISHED,
+                "price": None,
+                "currency": "GHS",
+            },
+            format="json",
+        )
+        self.assertEqual(vehicle_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(
+            Product.objects.filter(sku="ADMIN-UNPRICED-VEHICLE").exists()
+        )
 
     def test_product_detail_contains_public_catalogue_data_only(self):
         response = self.client.get(
@@ -923,6 +1019,3 @@ class ProductImageLimitAndFileUploadTests(TestCase):
         )
         self.assertFalse(form_fail.is_valid())
         self.assertIn("already has 3 product images", str(form_fail.errors))
-
-
-

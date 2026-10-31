@@ -17,6 +17,7 @@ export default function Footer() {
       </Link>
       <nav className="footer-nav" aria-label="Footer navigation">
         <Link href="/products">Parts</Link>
+        <Link href="/quotes">Request a quote</Link>
         <Link href="/vehicles">Vehicles</Link>
         <Link href="/promotions">Offers</Link>
         <Link href="/account">Account</Link>
@@ -26,4 +27,3 @@ export default function Footer() {
     </footer>
   );
 }
-

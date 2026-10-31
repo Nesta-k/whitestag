@@ -48,8 +48,15 @@ export function getCategories(params?: {
   );
 }
 
-export function getBrands(): Promise<PaginatedResponse<Brand>> {
-  return apiFetch<PaginatedResponse<Brand>>("/api/catalogue/brands/");
+export function getBrands(params?: {
+  page_size?: number;
+}): Promise<PaginatedResponse<Brand>> {
+  const qs = new URLSearchParams();
+  if (params?.page_size) qs.set("page_size", String(params.page_size));
+  const query = qs.toString();
+  return apiFetch<PaginatedResponse<Brand>>(
+    `/api/catalogue/brands/${query ? `?${query}` : ""}`
+  );
 }
 
 export function getPromotions(): Promise<PaginatedResponse<Promotion>> {

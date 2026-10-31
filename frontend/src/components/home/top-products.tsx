@@ -42,7 +42,10 @@ export default function TopProducts({
       }
       setLoading(true);
       try {
-        const data = await getProducts({ category: slug });
+        const data = await getProducts({
+          category: slug,
+          sales_method: "direct_purchase",
+        });
         setProducts(data.results);
       } catch (requestError) {
         setProducts([]);
@@ -103,7 +106,7 @@ export default function TopProducts({
             the full catalogue instead.
           </p>
           <Link className="text-link" href="/products">
-            View all products
+            View all buy-online products
           </Link>
         </div>
       )}

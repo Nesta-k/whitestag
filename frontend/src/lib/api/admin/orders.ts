@@ -4,6 +4,11 @@ import type {
   DashboardOverview,
   DeliveryPricingAuditEntry,
   DeliveryPricingConfiguration,
+  DeliveryQuoteRequest,
+  DeliverySpecialRule,
+  GhanaRegionalRate,
+  AfricanDeliveryCountry,
+  InternationalDeliverySettings,
   PaymentRefundResult,
   StaffDeliveryPricing,
   StaffDeliverySurcharge,
@@ -142,5 +147,96 @@ export function listDeliveryPricingAudit(params: { page?: number } = {}): Promis
 > {
   return adminGet<PaginatedResponse<DeliveryPricingAuditEntry>>(
     `${PRICING_BASE}/audit/${buildQuery({ ...params })}`,
+  );
+}
+
+export function listGhanaRegionalRates(params: { page?: number } = {}): Promise<
+  PaginatedResponse<GhanaRegionalRate>
+> {
+  return adminGet<PaginatedResponse<GhanaRegionalRate>>(
+    `${PRICING_BASE}/regions/${buildQuery({ ...params })}`,
+  );
+}
+
+export function updateGhanaRegionalRate(
+  id: number,
+  payload: Partial<Pick<GhanaRegionalRate, "version" | "flat_fee" | "rate_per_kg" | "is_active" | "allow_fallback">>,
+): Promise<GhanaRegionalRate> {
+  return adminPatch<GhanaRegionalRate>(`${PRICING_BASE}/regions/${id}/`, payload);
+}
+
+export function listAfricanDeliveryCountries(params: { page?: number } = {}): Promise<
+  PaginatedResponse<AfricanDeliveryCountry>
+> {
+  return adminGet<PaginatedResponse<AfricanDeliveryCountry>>(
+    `${PRICING_BASE}/countries/${buildQuery({ ...params })}`,
+  );
+}
+
+export function updateAfricanDeliveryCountry(
+  id: number,
+  payload: { is_active: boolean },
+): Promise<AfricanDeliveryCountry> {
+  return adminPatch<AfricanDeliveryCountry>(
+    `${PRICING_BASE}/countries/${id}/`,
+    payload,
+  );
+}
+
+export function listDeliverySpecialRules(params: { page?: number } = {}): Promise<
+  PaginatedResponse<DeliverySpecialRule>
+> {
+  return adminGet<PaginatedResponse<DeliverySpecialRule>>(
+    `${PRICING_BASE}/special-rules/${buildQuery({ ...params })}`,
+  );
+}
+
+export function createDeliverySpecialRule(
+  payload: Partial<DeliverySpecialRule>,
+): Promise<DeliverySpecialRule> {
+  return adminPost<DeliverySpecialRule>(`${PRICING_BASE}/special-rules/`, payload);
+}
+
+export function updateDeliverySpecialRule(
+  id: number,
+  payload: Partial<DeliverySpecialRule>,
+): Promise<DeliverySpecialRule> {
+  return adminPatch<DeliverySpecialRule>(
+    `${PRICING_BASE}/special-rules/${id}/`,
+    payload,
+  );
+}
+
+export function getInternationalDeliverySettings(): Promise<InternationalDeliverySettings> {
+  return adminGet<InternationalDeliverySettings>(
+    `${PRICING_BASE}/international-settings/`,
+  );
+}
+
+export function updateInternationalDeliverySettings(
+  payload: Pick<InternationalDeliverySettings, "manual_quotes_enabled" | "instructions">,
+): Promise<InternationalDeliverySettings> {
+  return adminPatch<InternationalDeliverySettings>(
+    `${PRICING_BASE}/international-settings/`,
+    payload,
+  );
+}
+
+export function listDeliveryQuoteRequests(params: {
+  page?: number;
+  status?: string;
+} = {}): Promise<PaginatedResponse<DeliveryQuoteRequest>> {
+  return adminGet<PaginatedResponse<DeliveryQuoteRequest>>(
+    `${PRICING_BASE}/quote-requests/${buildQuery({ ...params })}`,
+  );
+}
+
+export function updateDeliveryQuoteRequest(
+  reference: string,
+  payload: Pick<DeliveryQuoteRequest, "status" | "quoted_fee" | "admin_note">,
+): Promise<DeliveryQuoteRequest> {
+  return adminPatch<DeliveryQuoteRequest>(
+    `${PRICING_BASE}/quote-requests/${reference}/`,
+    payload,
   );
 }

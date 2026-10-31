@@ -40,6 +40,13 @@ if not CORS_ALLOWED_ORIGINS:
     raise ImproperlyConfigured(
         "CORS_ALLOWED_ORIGINS must contain the deployed frontend origin."
     )
+if (
+    not FRONTEND_BASE_URL.startswith("https://")
+    or FRONTEND_BASE_URL not in CORS_ALLOWED_ORIGINS
+):
+    raise ImproperlyConfigured(
+        "FRONTEND_BASE_URL must be a deployed HTTPS origin listed in CORS_ALLOWED_ORIGINS."
+    )
 if not CSRF_TRUSTED_ORIGINS:
     raise ImproperlyConfigured(
         "CSRF_TRUSTED_ORIGINS must contain trusted HTTPS origins."

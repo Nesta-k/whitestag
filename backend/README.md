@@ -32,14 +32,17 @@ local origins using [the Google authentication setup guide](../docs/google-authe
 
 ## Delivery pricing and checkout
 
-Delivery pricing is configured in Django Admin under **Delivery pricing
-configurations**, **Delivery zones**, and **Delivery surcharges**. No rates,
-distances, or surcharges are seeded in code.
+Delivery pricing is managed from the staff dashboard and Django Admin.
+Migration `0010_regional_and_quoted_delivery` seeds editable starter fees for
+Ghana's 16 regions and enables African destinations for manual quotations.
+These suggested domestic fees are not guaranteed courier prices; no
+international shipping rates are configured.
 
-Create one active pricing configuration and assign it a unique version. Staff
-configure the GHS base fee, per-kilometre and per-kilogram rates, minimum fee,
-optional maximum fee, rounding mode, and optional manual-review thresholds.
-Only one configuration may be active at a time. Configuration changes are
+Create an active general pricing configuration and assign it a unique version
+for fallback areas. Staff configure the GHS base fee, per-kilometre and
+per-kilogram rates, minimum fee, optional maximum fee, rounding mode, and
+optional manual-review thresholds. Only one configuration may be active at a
+time. Configuration changes are
 recorded in a read-only Django Admin audit log with the acting staff account
 and before/after values. Zone estimates, surcharge rules, and active states are
 audited as well. Keep the version identifier meaningful when changing
@@ -62,17 +65,38 @@ quantities. Request-supplied weights, fees, distances, or totals are ignored.
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/orders/delivery-zones/` | List active delivery areas and estimated distances |
+| `GET` | `/api/orders/delivery-options/` | List available Ghana regions, African countries, and international quote instructions |
+| `GET` | `/api/orders/delivery-zones/` | List active fallback delivery areas and estimated distances |
 | `POST` | `/api/orders/delivery-quote/` | Authenticated quote calculated from the customer's server-side cart |
+| `POST` | `/api/orders/delivery-quote-requests/` | Save an authenticated manual quotation request for staff review |
 | `POST` | `/api/orders/checkout/` | Revalidate pricing, create the order, and snapshot the quote |
 
+Admin delivery configuration is available under
+`/api/orders/superadmin/delivery-pricing/`: region and country lists/details,
+special-rule list/create/detail, international settings, quote-request
+list/detail, and the existing configuration, zone, surcharge, and audit
+resources. These endpoints require an Admin or Superadmin role.
+
 The quote and checkout endpoints require an authenticated customer account.
-They accept a Ghana destination (`country: "GH"`) and match city/region to an
-active zone. A successful quote returns an explicitly estimated breakdown:
-base fee, distance and weight components, applicable fixed surcharges, route
-distance source, shipment weight, formula version, and estimated order total.
-When location, weight, route estimate, configuration, or safety thresholds
-require manual review, the response contains no exact fee or order total.
+For Ghana, an active configured regional fee takes priority and is combined
+with the region's optional per-kilogram rate and applicable surcharges; it is
+never added to the fallback distance formula. Inactive regions use the general
+formula only when the region explicitly allows fallback and a matching active
+zone exists. Destinations without a regional rate can use the configured zone
+fallback. If pricing is unavailable or a product rule requires review, no fee
+is invented and checkout is not allowed.
+
+African destinations other than Ghana are always manual quotation requests.
+Their country must be enabled, and international delivery must be enabled in
+the admin settings. No Ghana regional or fallback rates are applied abroad.
+Vehicle types, products matching the configurable heavy-item threshold, and
+products matching configured special rules require staff review by default.
+Requests snapshot the submitted destination and cart items but do not reserve
+inventory or create a payable order.
+
+A successful domestic quote returns its regional or fallback mode and an
+explicit breakdown including base, distance/weight components, applicable
+surcharges, formula/rate version, and estimated order total.
 
 Checkout recalculates from locked server-side cart/product/configuration data.
 It persists the pricing inputs and formula version, zone destination,
@@ -88,9 +112,18 @@ Hard safety limits route extreme shipments for manual review: 10,000 kg,
 thresholds in the active pricing configuration. These are operational limits,
 not commercial rates.
 
-No new environment variables are required for this zone-estimate implementation.
-`backend/.env.example` explicitly notes that delivery rates/distances are
-configured in Admin and that no external routing secret is currently used.
+Administrators can manage regional fees and their versions, region enablement
+and fallback coverage, African country availability, international quote
+instructions, special product rules, and manual quotation requests in the
+delivery pricing dashboard. These changes are recorded in the pricing audit
+log. Staff can set a quoted fee and update the request status there; customer
+notification and conversion of an accepted manual quote into a payable order
+are not yet automated.
+
+Paystack returns customers to `FRONTEND_BASE_URL/checkout/complete`, where the
+frontend asks the authenticated API to verify the transaction with Paystack.
+Set `FRONTEND_BASE_URL` to the frontend origin and include that exact origin in
+`CORS_ALLOWED_ORIGINS` for production. The Paystack secret remains server-side.
 
 ## Staff dashboard API
 
@@ -123,6 +156,16 @@ The dashboard uses these endpoints:
 | `GET` | `/api/orders/staff/delivery-pricing/` | Read pricing configuration, zones, and surcharges |
 | `GET` | `/api/staff/customers/` | Search/list customer records |
 
+Product SKUs and slugs are generated automatically when staff create a product.
+Slugs are based on the product name and receive a numeric suffix when needed to
+remain unique. Existing SKUs remain visible in product listings and inventory.
+Product creation accepts an optional `initial_stock_quantity`; positive values
+are recorded as audited stock receipts, while omitted or zero values create an
+empty inventory record. Further stock changes are made from the Inventory page.
+Product enquiry forms submit to the vehicle-enquiries API and appear in the
+staff dashboard's Product enquiries list. Enquiries are accepted for any
+published product.
+
 Superuser account management is separate from the staff operations permission.
 Only active Django superusers can use:
 
@@ -140,8 +183,9 @@ routes.
 
 Payment records are read-only in the dashboard; staff cannot mark an order paid
 there. Payment state remains controlled by verified provider callbacks and the
-existing payment services. Delivery pricing changes are managed through Django
-Admin. Promotions, preorders, vehicle enquiries, and general business settings
+existing payment services. Product enquiries use their separate enquiry
+workflow; delivery quotations submitted from checkout use the delivery quote
+request workflow above. Promotions, preorders, and general business settings
 do not currently have supporting backend models and APIs, so the dashboard
 marks those sections as unavailable rather than displaying fabricated data or
 accepting changes that would not be persisted.

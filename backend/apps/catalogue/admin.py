@@ -315,9 +315,7 @@ class ProductAdminForm(forms.ModelForm):
     class Meta:
         model = Product
         fields = [
-            "sku",
             "name",
-            "slug",
             "description",
             "category",
             "brand",
@@ -372,15 +370,13 @@ class ProductAdmin(admin.ModelAdmin):
         "currency",
     ]
     search_fields = ["name", "sku", "slug", "description"]
-    prepopulated_fields = {"slug": ("name",)}
     inlines = [ProductImageInline, ProductSpecificationInline]
 
     fieldsets = (
         ("Basic Information", {
+            "description": "SKU and slug are generated automatically when a product is created.",
             "fields": (
-                "sku",
                 "name",
-                "slug",
                 "description",
                 "category",
                 "brand",

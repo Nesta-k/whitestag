@@ -96,6 +96,9 @@ def initialize_transaction(payment, customer_email):
         "amount": payment.amount_minor,
         "currency": payment.currency,
         "reference": payment.reference,
+        "callback_url": (
+            f"{settings.FRONTEND_BASE_URL}/checkout/complete"
+        ),
     }
     request = Request(
         PAYSTACK_INITIALIZE_URL,

@@ -3,6 +3,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from rest_framework import serializers
 
+from apps.catalogue.image_urls import public_image_url
 from apps.catalogue.models import Product
 from apps.catalogue.serializers import ProductSerializer
 from apps.inventory.models import InventoryRecord
@@ -18,9 +19,20 @@ from .models import (
 
 
 class CustomerSerializer(serializers.ModelSerializer):
+    first_name = serializers.CharField(
+        source="user.first_name",
+        read_only=True,
+        allow_blank=True,
+    )
+    last_name = serializers.CharField(
+        source="user.last_name",
+        read_only=True,
+        allow_blank=True,
+    )
+
     class Meta:
         model = CustomerAccount
-        fields = ["id", "email", "created_at"]
+        fields = ["id", "email", "first_name", "last_name", "created_at"]
         read_only_fields = fields
 
 
@@ -263,6 +275,7 @@ class CartProductSerializer(serializers.Serializer):
     id = serializers.IntegerField(read_only=True)
     name = serializers.CharField(read_only=True)
     slug = serializers.SlugField(read_only=True)
+    image_url = serializers.SerializerMethodField()
     product_type = serializers.CharField(read_only=True)
     price = serializers.DecimalField(
         max_digits=12,
@@ -271,6 +284,15 @@ class CartProductSerializer(serializers.Serializer):
         read_only=True,
     )
     currency = serializers.CharField(read_only=True)
+
+    def get_image_url(self, product):
+        image = next(iter(product.images.all()), None)
+        if image is None:
+            return ""
+        return public_image_url(
+            self.context.get("request"),
+            image.image_url,
+        )
 
 
 class CartItemSerializer(serializers.ModelSerializer):
@@ -293,7 +315,6 @@ class CartItemSerializer(serializers.ModelSerializer):
     def _is_eligible(product):
         return (
             product.publication_status == Product.PublicationStatus.PUBLISHED
-            and product.product_type == Product.ProductType.SPARE_PART
             and product.sales_method == Product.SalesMethod.DIRECT_PURCHASE
             and product.price is not None
             and product.price > 0
@@ -303,7 +324,10 @@ class CartItemSerializer(serializers.ModelSerializer):
     def get_product(self, item):
         if not self._is_eligible(item.product):
             return None
-        return CartProductSerializer(item.product).data
+        return CartProductSerializer(
+            item.product,
+            context=self.context,
+        ).data
 
     def get_is_available(self, item):
         if not self._is_eligible(item.product):

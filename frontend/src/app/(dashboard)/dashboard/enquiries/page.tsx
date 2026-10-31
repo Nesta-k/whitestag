@@ -82,8 +82,8 @@ export default function EnquiriesPage() {
 
   const columns: AdminColumn<VehicleEnquiry>[] = [
     {
-      key: "vehicle",
-      header: "Vehicle",
+      key: "product",
+      header: "Product",
       render: (row) => (
         <div>
           <strong>{row.product.name}</strong>
@@ -119,7 +119,7 @@ export default function EnquiriesPage() {
   return (
     <>
       <AdminPageHeader
-        title="Vehicle enquiries"
+        title="Product enquiries"
         description="Quotation requests submitted by storefront customers."
       />
 
@@ -129,7 +129,7 @@ export default function EnquiriesPage() {
             <input
               className="ws-dash-input ws-dash-search"
               type="search"
-              placeholder="Search by name, email or vehicle…"
+              placeholder="Search by name, email or product…"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
@@ -209,7 +209,7 @@ export default function EnquiriesPage() {
         {selected ? (
           <>
             <dl className="ws-dash-detail">
-              <dt className="ws-dash-detail-term">Vehicle</dt>
+              <dt className="ws-dash-detail-term">Product</dt>
               <dd className="ws-dash-detail-value">{selected.product.name}</dd>
               <dt className="ws-dash-detail-term">SKU</dt>
               <dd className="ws-dash-detail-value">{selected.product.sku}</dd>

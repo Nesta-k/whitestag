@@ -59,17 +59,18 @@ export default async function ProductDetailPage({
   }
 
   const purchasable =
-    product.product_type === "spare_part" &&
     product.sales_method === "direct_purchase" &&
     product.price !== null &&
     Number(product.price) > 0 &&
     product.currency === "GHS";
   const images = product.images;
+  const catalogueHref =
+    product.sales_method === "quotation" ? "/quotes" : "/products";
 
   return (
     <article className="product-detail">
-      <Link className="back-link" href="/products">
-        ← Back to catalogue
+      <Link className="back-link" href={catalogueHref}>
+        ← Back to {product.sales_method === "quotation" ? "quotes" : "shop"}
       </Link>
       <div className="product-detail-grid">
         <div className="product-gallery">
@@ -124,14 +125,12 @@ export default async function ProductDetailPage({
           {purchasable ? (
             <AddToCartButton productId={product.id} />
           ) : (
-            <a
+            <Link
               className="primary-link"
-              href={`mailto:hello@whitestag.com?subject=${encodeURIComponent(
-                `Enquiry about ${product.name} (${product.sku})`,
-              )}`}
+              href={`/products/${encodeURIComponent(product.slug)}/enquiry`}
             >
               Ask us about this item <span aria-hidden="true">↗</span>
-            </a>
+            </Link>
           )}
           {product.specifications.length > 0 && (
             <section className="specifications">

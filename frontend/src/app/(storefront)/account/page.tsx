@@ -2,8 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useCallback, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { ApiError } from "@/lib/api/client";
+import { getOrders } from "@/lib/api/orders";
+import { formatPrice } from "@/lib/format";
+import type { Order } from "@/types/api";
 import { useAuth } from "@/store/auth-context";
 import GoogleSignInButton from "@/components/account/google-sign-in-button";
 
@@ -24,6 +27,9 @@ export default function AccountPage() {
   const router = useRouter();
   const { user, loading, error: sessionError, signIn, signUp, signOut, signInWithGoogle } =
     useAuth();
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersError, setOrdersError] = useState("");
   const [registering, setRegistering] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -34,6 +40,40 @@ export default function AccountPage() {
 
   const googleEnabled = Boolean(process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID);
 
+  useEffect(() => {
+    if (!user) {
+      setOrders([]);
+      setOrdersError("");
+      return;
+    }
+
+    let active = true;
+    setOrdersLoading(true);
+    setOrdersError("");
+    getOrders()
+      .then((response) => {
+        if (active) setOrders(response.results);
+      })
+      .catch((requestError: unknown) => {
+        if (active) {
+          setOrdersError(
+            requestError instanceof ApiError
+              ? `Your orders could not be loaded (${requestError.status}).`
+              : requestError instanceof Error
+                ? requestError.message
+                : "Your orders could not be loaded. Please try again.",
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setOrdersLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [user]);
+
   const handleGoogleCredential = useCallback(
     async (credential: string) => {
       setError("");
@@ -41,7 +81,7 @@ export default function AccountPage() {
       setSubmitting(true);
       try {
         await signInWithGoogle(credential);
-        router.push("/cart");
+        router.push("/account");
       } catch (signInError) {
         setGoogleError(getErrorMessage(signInError));
       } finally {
@@ -69,7 +109,7 @@ export default function AccountPage() {
       } else {
         await signIn(email, password);
       }
-      router.push("/cart");
+      router.push("/account");
     } catch (submitError) {
       setError(getErrorMessage(submitError));
     } finally {
@@ -82,19 +122,138 @@ export default function AccountPage() {
   }
 
   if (user) {
+    const displayName =
+      `${user.first_name} ${user.last_name}`.trim() || user.email.split("@")[0];
+    const initials = `${user.first_name} ${user.last_name}`
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part.charAt(0))
+      .join("")
+      .toUpperCase() || user.email.slice(0, 1).toUpperCase();
+    const recentOrders = orders.slice(0, 5);
+
     return (
-      <section className="account-page">
-        <p className="eyebrow">YOUR ACCOUNT</p>
-        <h1>Welcome back.</h1>
-        <p className="account-email">{user.email}</p>
-        <div className="account-actions">
-          <Link className="primary-link" href="/cart">
-            Go to your cart <span aria-hidden="true">↗</span>
-          </Link>
-          <button className="secondary-button" onClick={() => signOut()}>
+      <section className="customer-dashboard">
+        <div className="customer-dashboard-heading">
+          <div>
+            <p className="eyebrow">YOUR WHITESTAG ACCOUNT</p>
+            <h1>Welcome back, {displayName}.</h1>
+            <p>Manage your orders, saved items, and shopping from one place.</p>
+          </div>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => signOut()}
+          >
             Sign out
           </button>
         </div>
+
+        <div className="customer-account-card">
+          <span className="customer-avatar" aria-hidden="true">{initials}</span>
+          <div>
+            <strong>{displayName}</strong>
+            <span>{user.email}</span>
+          </div>
+          <span className="customer-account-status">Customer account</span>
+        </div>
+
+        <nav className="customer-shortcuts" aria-label="Account shortcuts">
+          <Link href="/cart">
+            <span className="customer-shortcut-icon" aria-hidden="true">01</span>
+            <span><strong>Your cart</strong><small>Review items and checkout</small></span>
+            <span aria-hidden="true">→</span>
+          </Link>
+          <Link href="/wishlist">
+            <span className="customer-shortcut-icon" aria-hidden="true">02</span>
+            <span><strong>Saved to buy</strong><small>Products ready for online purchase</small></span>
+            <span aria-hidden="true">→</span>
+          </Link>
+          <Link href="/wishlist/quotes">
+            <span className="customer-shortcut-icon" aria-hidden="true">03</span>
+            <span><strong>Saved for a quote</strong><small>Vehicles and specialist items</small></span>
+            <span aria-hidden="true">→</span>
+          </Link>
+        </nav>
+
+        <section className="customer-orders">
+          <div className="customer-section-heading">
+            <div>
+              <p className="eyebrow">ORDER HISTORY</p>
+              <h2>Your recent orders</h2>
+            </div>
+            <Link href="/products">Continue shopping <span aria-hidden="true">↗</span></Link>
+          </div>
+
+          {ordersLoading ? (
+            <p className="customer-orders-message">Loading your orders…</p>
+          ) : ordersError ? (
+            <div className="customer-orders-message is-error" role="alert">
+              <p>{ordersError}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setOrdersLoading(true);
+                  setOrdersError("");
+                  getOrders()
+                    .then((response) => setOrders(response.results))
+                    .catch((requestError: unknown) => {
+                      setOrdersError(
+                        requestError instanceof Error
+                          ? requestError.message
+                          : "Your orders could not be loaded. Please try again.",
+                      );
+                    })
+                    .finally(() => setOrdersLoading(false));
+                }}
+              >
+                Try again
+              </button>
+            </div>
+          ) : recentOrders.length === 0 ? (
+            <div className="customer-orders-empty">
+              <div>
+                <strong>No orders yet</strong>
+                <p>Your orders will appear here after you complete checkout.</p>
+              </div>
+              <Link className="primary-link" href="/products">
+                Explore the shop <span aria-hidden="true">↗</span>
+              </Link>
+            </div>
+          ) : (
+            <div className="customer-order-list">
+              {recentOrders.map((order) => (
+                <article className="customer-order" key={order.public_reference}>
+                  <div className="customer-order-main">
+                    <strong>Order {order.public_reference}</strong>
+                    <span>
+                      {new Date(order.created_at).toLocaleDateString(undefined, {
+                        year: "numeric",
+                        month: "short",
+                        day: "numeric",
+                      })}
+                      {" · "}
+                      {order.items.length} {order.items.length === 1 ? "item" : "items"}
+                    </span>
+                  </div>
+                  <div className="customer-order-payment">
+                    <span className={`customer-order-status is-${order.status}`}>
+                      {order.status.replaceAll("_", " ")}
+                    </span>
+                    <span className={`customer-order-status is-payment-${order.payment_status}`}>
+                      {order.payment_status.replaceAll("_", " ")}
+                    </span>
+                  </div>
+                  <strong className="customer-order-total">
+                    {formatPrice(order.total, order.currency)}
+                  </strong>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
       </section>
     );
   }

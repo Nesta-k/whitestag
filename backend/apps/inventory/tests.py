@@ -7,6 +7,7 @@ from django.db import IntegrityError, close_old_connections, transaction
 from django.test import (
     TestCase,
     TransactionTestCase,
+    override_settings,
     skipUnlessDBFeature,
 )
 from django.urls import reverse
@@ -255,6 +256,21 @@ class InventoryApiPermissionTests(TestCase):
             sales_method=Product.SalesMethod.DIRECT_PURCHASE,
         )
         self.client = APIClient()
+
+    @override_settings(CORS_ALLOWED_ORIGINS=["https://store.example"])
+    def test_cors_preflight_allows_stock_operation_idempotency_header(self):
+        response = self.client.options(
+            reverse("api:inventory:adjust", args=[self.product.pk]),
+            HTTP_ORIGIN="https://store.example",
+            HTTP_ACCESS_CONTROL_REQUEST_METHOD="POST",
+            HTTP_ACCESS_CONTROL_REQUEST_HEADERS=(
+                "authorization,content-type,idempotency-key"
+            ),
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        allowed_headers = response["Access-Control-Allow-Headers"].lower()
+        self.assertIn("idempotency-key", allowed_headers)
 
     def test_anonymous_and_non_staff_users_cannot_view_inventory(self):
         url = reverse("api:inventory:record-list")

@@ -3,7 +3,9 @@ from django.urls import path
 from .views import (
     CheckoutView,
     CustomerOrderListView,
+    DeliveryOptionsView,
     DeliveryQuoteView,
+    DeliveryQuoteRequestView,
     DeliveryZoneListView,
     OrderCancelView,
     OrderDetailView,
@@ -17,6 +19,15 @@ from .views import (
     StaffPaymentListView,
     StaffPaymentRefundView,
     SuperuserDeliveryPricingAuditListView,
+    SuperuserAfricanCountryDetailView,
+    SuperuserAfricanCountryListView,
+    SuperuserDeliveryQuoteRequestDetailView,
+    SuperuserDeliveryQuoteRequestListView,
+    SuperuserDeliverySpecialRuleDetailView,
+    SuperuserDeliverySpecialRuleListView,
+    SuperuserInternationalDeliverySettingsView,
+    SuperuserRegionalRateDetailView,
+    SuperuserRegionalRateListView,
     SuperuserDeliverySurchargeDetailView,
     SuperuserDeliverySurchargeListCreateView,
     SuperuserDeliveryZoneDetailView,
@@ -31,7 +42,13 @@ app_name = "orders"
 urlpatterns = [
     path("checkout/", CheckoutView.as_view(), name="checkout"),
     path("delivery-zones/", DeliveryZoneListView.as_view(), name="delivery-zone-list"),
+    path("delivery-options/", DeliveryOptionsView.as_view(), name="delivery-options"),
     path("delivery-quote/", DeliveryQuoteView.as_view(), name="delivery-quote"),
+    path(
+        "delivery-quote-requests/",
+        DeliveryQuoteRequestView.as_view(),
+        name="delivery-quote-request",
+    ),
     path(
         "staff/dashboard/",
         StaffDashboardOverviewView.as_view(),
@@ -77,6 +94,51 @@ urlpatterns = [
         "superadmin/delivery-pricing/audit/",
         SuperuserDeliveryPricingAuditListView.as_view(),
         name="superadmin-delivery-pricing-audit",
+    ),
+    path(
+        "superadmin/delivery-pricing/regions/",
+        SuperuserRegionalRateListView.as_view(),
+        name="superadmin-delivery-region-list",
+    ),
+    path(
+        "superadmin/delivery-pricing/regions/<int:pk>/",
+        SuperuserRegionalRateDetailView.as_view(),
+        name="superadmin-delivery-region-detail",
+    ),
+    path(
+        "superadmin/delivery-pricing/countries/",
+        SuperuserAfricanCountryListView.as_view(),
+        name="superadmin-delivery-country-list",
+    ),
+    path(
+        "superadmin/delivery-pricing/countries/<int:pk>/",
+        SuperuserAfricanCountryDetailView.as_view(),
+        name="superadmin-delivery-country-detail",
+    ),
+    path(
+        "superadmin/delivery-pricing/special-rules/",
+        SuperuserDeliverySpecialRuleListView.as_view(),
+        name="superadmin-delivery-special-rule-list",
+    ),
+    path(
+        "superadmin/delivery-pricing/special-rules/<int:pk>/",
+        SuperuserDeliverySpecialRuleDetailView.as_view(),
+        name="superadmin-delivery-special-rule-detail",
+    ),
+    path(
+        "superadmin/delivery-pricing/international-settings/",
+        SuperuserInternationalDeliverySettingsView.as_view(),
+        name="superadmin-international-delivery-settings",
+    ),
+    path(
+        "superadmin/delivery-pricing/quote-requests/",
+        SuperuserDeliveryQuoteRequestListView.as_view(),
+        name="superadmin-delivery-quote-request-list",
+    ),
+    path(
+        "superadmin/delivery-pricing/quote-requests/<uuid:pk>/",
+        SuperuserDeliveryQuoteRequestDetailView.as_view(),
+        name="superadmin-delivery-quote-request-detail",
     ),
     path(
         "payments/paystack/webhook/",

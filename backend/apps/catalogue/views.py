@@ -328,7 +328,6 @@ class HomepagePublicView(APIView):
             featured_products = (
                 Product.objects.filter(
                     publication_status=Product.PublicationStatus.PUBLISHED,
-                    product_type=Product.ProductType.SPARE_PART,
                     sales_method=Product.SalesMethod.DIRECT_PURCHASE,
                 )
                 .select_related("category", "brand")

@@ -60,7 +60,6 @@ def _shipping_matches(order, shipping):
 def _validate_product(product):
     if (
         product.publication_status != Product.PublicationStatus.PUBLISHED
-        or product.product_type != Product.ProductType.SPARE_PART
         or product.sales_method != Product.SalesMethod.DIRECT_PURCHASE
         or product.price is None
         or product.price <= ZERO
@@ -144,8 +143,16 @@ def create_order_from_cart(customer_id, idempotency_key, shipping):
         delivery_fee = Decimal(delivery_quote["delivery_fee"])
         delivery_zone_code = delivery_quote["destination"]["zone_code"]
         delivery_quote["order_total"] = str(subtotal + delivery_fee)
-        delivery_zone = DeliveryZone.objects.get(code=delivery_zone_code)
-        delivery_zone_name = delivery_zone.name
+        delivery_zone = (
+            DeliveryZone.objects.get(code=delivery_zone_code)
+            if delivery_zone_code
+            else None
+        )
+        delivery_zone_name = (
+            delivery_zone.name
+            if delivery_zone
+            else delivery_quote["destination"].get("region", "")
+        )
         discount = ZERO
         order = Order.objects.create(
             customer_id=customer_id,
@@ -161,8 +168,10 @@ def create_order_from_cart(customer_id, idempotency_key, shipping):
             delivery_zone_code=delivery_zone_code,
             delivery_zone_name=delivery_zone_name,
             shipment_weight_kg=Decimal(delivery_quote["shipment_weight_kg"]),
-            estimated_distance_km=Decimal(
-                delivery_quote["estimated_distance_km"]
+            estimated_distance_km=(
+                Decimal(delivery_quote["estimated_distance_km"])
+                if delivery_quote["estimated_distance_km"] is not None
+                else None
             ),
             delivery_distance_source=delivery_quote["distance_source"],
             delivery_pricing_snapshot=delivery_quote,

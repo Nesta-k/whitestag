@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { getCategories } from "@/lib/api/catalogue";
 import type { Category } from "@/types/api";
-import { formatPrice } from "@/lib/format";
 import { useAuth } from "@/store/auth-context";
 import { useCart } from "@/store/cart-context";
 import { useWishlist } from "@/store/wishlist-context";
@@ -19,25 +18,30 @@ const navLinks = [
   { href: "/#support", label: "Contact" },
 ];
 
-function CartTotal({ className }: { className?: string }) {
-  const { cart, itemCount } = useCart();
-  const total = (cart?.items ?? []).reduce((sum, item) => {
-    if (!item.product) return sum;
-    const price = Number(item.product.price);
-    return Number.isFinite(price) ? sum + price * item.quantity : sum;
-  }, 0);
+function userInitials(firstName: string, lastName: string, email: string): string {
+  const nameParts = `${firstName} ${lastName}`.trim().split(/\s+/).filter(Boolean);
+  if (nameParts.length > 0) {
+    return nameParts
+      .slice(0, 2)
+      .map((part) => part.charAt(0))
+      .join("")
+      .toUpperCase();
+  }
 
-  if (itemCount === 0) return null;
-
-  return (
-    <span className={className}>
-      {formatPrice(total.toFixed(2), "GHS")}
-    </span>
-  );
+  const emailName = email.split("@", 1)[0] ?? "";
+  const emailParts = emailName.split(/[._+-]+/).filter(Boolean);
+  if (emailParts.length > 1) {
+    return emailParts
+      .slice(0, 2)
+      .map((part) => part.charAt(0))
+      .join("")
+      .toUpperCase();
+  }
+  return emailName.slice(0, 2).toUpperCase() || "U";
 }
 
 export default function Header() {
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
   const { itemCount } = useCart();
   const { count: wishlistCount } = useWishlist();
   const [categories, setCategories] = useState<Category[]>([]);
@@ -108,7 +112,7 @@ export default function Header() {
             </form>
 
             <div className="ws-actions">
-              <Link className="ws-action" href="/wishlist" aria-label={`Wishlist (${wishlistCount} items)`}>
+              <Link className="ws-action ws-wishlist-action" href="/wishlist" aria-label={`Wishlist (${wishlistCount} items)`}>
                 <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22">
                   <path
                     d="M12 20s-7-4.4-7-9.3A4.2 4.2 0 0 1 12 7.8a4.2 4.2 0 0 1 7 2.9C19 15.6 12 20 12 20Z"
@@ -123,20 +127,17 @@ export default function Header() {
               </Link>
 
               {user ? (
-                <div className="ws-account">
-                  <Link className="ws-action" href="/account" aria-label="Your account">
-                    <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22">
-                      <circle cx="12" cy="8.5" r="3.6" fill="none" stroke="currentColor" strokeWidth="1.8" />
-                      <path d="M5 19.5a7 7 0 0 1 14 0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                    </svg>
-                    <span className="ws-action-label">Account</span>
-                  </Link>
-                  <button className="ws-signout" type="button" onClick={() => signOut()}>
-                    Sign out
-                  </button>
-                </div>
+                <Link
+                  className="ws-action ws-account-action"
+                  href="/account"
+                  aria-label={`Your account (${user.email})`}
+                >
+                  <span className="ws-account-initials" aria-hidden="true">
+                    {userInitials(user.first_name, user.last_name, user.email)}
+                  </span>
+                </Link>
               ) : (
-                <Link className="ws-action" href="/account" aria-label="Sign in">
+                <Link className="ws-action ws-account-action" href="/account" aria-label="Sign in">
                   <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22">
                     <circle cx="12" cy="8.5" r="3.6" fill="none" stroke="currentColor" strokeWidth="1.8" />
                     <path d="M5 19.5a7 7 0 0 1 14 0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
@@ -163,7 +164,6 @@ export default function Header() {
                 </span>
                 <span className="ws-cart-copy">
                   <small>Cart</small>
-                  <CartTotal className="ws-cart-total" />
                 </span>
               </Link>
             </div>
@@ -178,7 +178,7 @@ export default function Header() {
               <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22">
                 <path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
               </svg>
-              <span className="sr-only">Menu</span>
+              <span className="sr-only">{menuOpen ? "Close menu" : "Menu"}</span>
             </button>
           </div>
         </div>
@@ -228,15 +228,6 @@ export default function Header() {
 
       {menuOpen && (
         <div className="ws-mobile-menu" id="ws-mobile-menu">
-          <form className="ws-search ws-search-mobile" action="/products" method="get" role="search">
-            <input type="search" name="search" placeholder="Search the catalogue…" autoComplete="off" />
-            <button type="submit" aria-label="Search the catalogue">
-              <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
-                <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="2" />
-                <path d="M16.5 16.5 21 21" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-            </button>
-          </form>
           <ul>
             {navLinks.map((link) => (
               <li key={link.href}>
@@ -245,6 +236,19 @@ export default function Header() {
                 </Link>
               </li>
             ))}
+          </ul>
+          <p className="ws-mobile-heading">Your account</p>
+          <ul className="ws-mobile-account">
+            <li>
+              <Link href="/wishlist" onClick={() => setMenuOpen(false)}>
+                Wishlist{wishlistCount > 0 ? ` (${wishlistCount})` : ""}
+              </Link>
+            </li>
+            <li>
+              <Link href="/account" onClick={() => setMenuOpen(false)}>
+                {user ? "Account" : "Sign in"}
+              </Link>
+            </li>
           </ul>
           {categories.length > 0 && (
             <>
